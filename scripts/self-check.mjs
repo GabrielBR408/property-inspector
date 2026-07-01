@@ -151,22 +151,23 @@ let model
 
 console.log('\n[8] Run-on, UNPUNCTUATED multi-area dictation splits into one section per area')
 {
-  // The real iPhone repro: no periods; iOS capitalizes the new spoken sentence.
-  const REPRO = 'The south lobby has trees growing in it so have Billy fix that There is a leak in the basement'
+  // Generic synthetic run-on: no periods; a capitalized word ("There") cues the
+  // new spoken sentence the way phone dictation does.
+  const REPRO = 'The north lobby has some debris in the corner so note that There is a water leak in the basement'
   const secs = segmentNarrative(REPRO)
   const keys = secs.map((s) => s.key)
   assert('splits into exactly two sections', secs.length === 2, keys.join(','))
-  assert('sections are South Lobby then Basement', JSON.stringify(keys) === JSON.stringify(['southlobby', 'basement']), keys.join(','))
+  assert('sections are North Lobby then Basement', JSON.stringify(keys) === JSON.stringify(['northlobby', 'basement']), keys.join(','))
   const byKey = Object.fromEntries(secs.map((s) => [s.key, s]))
-  assert('South Lobby text is the lobby clause (with follow-up), verbatim',
-    byKey.southlobby && byKey.southlobby.text === 'The south lobby has trees growing in it so have Billy fix that',
-    byKey.southlobby && byKey.southlobby.text)
+  assert('North Lobby text is the lobby clause (with follow-up), verbatim',
+    byKey.northlobby && byKey.northlobby.text === 'The north lobby has some debris in the corner so note that',
+    byKey.northlobby && byKey.northlobby.text)
   assert('Basement text is the basement clause, verbatim',
-    byKey.basement && byKey.basement.text === 'There is a leak in the basement',
+    byKey.basement && byKey.basement.text === 'There is a water leak in the basement',
     byKey.basement && byKey.basement.text)
   assert('both slices are faithful to the narrative', secs.every((s) => faithful(REPRO, s.text)))
-  assert('Basement observation did NOT leak into South Lobby', !/leak in the basement/.test(byKey.southlobby.text))
-  assert('South Lobby display name carries the modifier', byKey.southlobby.name === 'South Lobby', byKey.southlobby.name)
+  assert('Basement observation did NOT leak into North Lobby', !/leak in the basement/.test(byKey.northlobby.text))
+  assert('North Lobby display name carries the modifier', byKey.northlobby.name === 'North Lobby', byKey.northlobby.name)
   assert('basement rating derived (Poor from "leak")', byKey.basement.condition === 'Poor', byKey.basement.condition)
 
   // Regression guard: a component word inside one clause must NOT split (no cue).
@@ -176,26 +177,26 @@ console.log('\n[8] Run-on, UNPUNCTUATED multi-area dictation splits into one sec
 
 console.log('\n[9] Punctuated multi-area walkthrough yields one section per area (no commingling)')
 {
-  // The exact live repro: 4 sentences, 4 distinct areas. Sentences 3 & 4 name
-  // areas ("engineers office", "loading dock") that must be recognized so they do
-  // NOT fall through into the previous section (Lobby).
+  // Generic synthetic walkthrough: 4 sentences naming 4 distinct areas. Sentences
+  // 3 & 4 name areas ("office", "loading dock") that must be recognized so they do
+  // NOT fall through into the previous section (Lobby) — the commingling bug.
   const NARR =
-    'On the roof the windscreen needs to be repainted. ' +
-    'Someone put graffiti on one of the columns by the lobby. ' +
-    "The engineers office smells funny and it's likely something from someone's desk. " +
-    'There are bugs in the loading dock and Billy needs to address that.'
+    'On the roof there are two cracked tiles near the vent. ' +
+    'The lobby floor has a scuff mark in one corner. ' +
+    'The office ceiling shows a water stain overhead. ' +
+    'The loading dock bumper is worn and needs replacing.'
   const secs = segmentNarrative(NARR)
   const keys = secs.map((s) => s.key)
   assert('produces exactly four sections', secs.length === 4, `${secs.length}: ${keys.join(',')}`)
-  assert('sections are Roof, Lobby, Engineer\'s Office, Loading Dock in order',
-    JSON.stringify(keys) === JSON.stringify(['roof', 'lobby', 'engineersoffice', 'loadingdock']), keys.join(','))
+  assert('sections are Roof, Lobby, Office, Loading Dock in order',
+    JSON.stringify(keys) === JSON.stringify(['roof', 'lobby', 'office', 'loadingdock']), keys.join(','))
   const byKey = Object.fromEntries(secs.map((s) => [s.key, s]))
-  assert('Lobby holds ONLY the graffiti/columns sentence',
-    byKey.lobby && byKey.lobby.text === 'Someone put graffiti on one of the columns by the lobby.', byKey.lobby && byKey.lobby.text)
-  assert('Lobby did NOT swallow the engineers-office sentence', byKey.lobby && !/engineers office/.test(byKey.lobby.text))
+  assert('Lobby holds ONLY its own sentence',
+    byKey.lobby && byKey.lobby.text === 'The lobby floor has a scuff mark in one corner.', byKey.lobby && byKey.lobby.text)
+  assert('Lobby did NOT swallow the office sentence', byKey.lobby && !/office/.test(byKey.lobby.text))
   assert('Lobby did NOT swallow the loading-dock sentence', byKey.lobby && !/loading dock/.test(byKey.lobby.text))
-  assert('Engineer\'s Office holds its own sentence', byKey.engineersoffice && /smells funny/.test(byKey.engineersoffice.text))
-  assert('Loading Dock holds its own sentence', byKey.loadingdock && /bugs in the loading dock/.test(byKey.loadingdock.text))
+  assert('Office holds its own sentence', byKey.office && /water stain/.test(byKey.office.text))
+  assert('Loading Dock holds its own sentence', byKey.loadingdock && /bumper/.test(byKey.loadingdock.text))
   for (const s of secs) assert(`${s.key} slice is faithful`, faithful(NARR, s.text))
 }
 
