@@ -319,6 +319,19 @@ export function mergeSections(prev = [], fresh = [], makeId = (k) => `sec_${k}`)
   return out
 }
 
+// Base-aware URL for the serverless endpoint. Under a sub-path deploy the app is
+// built with a Vite `base` prefix, so import.meta.env.BASE_URL carries that
+// prefix and the fetch routes correctly through a hub proxy. In Node (self-check)
+// import.meta.env is undefined → falls back to '/'.
+function apiUrl(path) {
+  let base = '/'
+  try {
+    const env = import.meta && import.meta.env
+    if (env && typeof env.BASE_URL === 'string') base = env.BASE_URL
+  } catch (_e) { /* Node / self-check */ }
+  return `${base}${path}`
+}
+
 // --- LLM analysis (faithfulness-safe) ---------------------------------------
 // Calls the serverless /api/draft with the narrative and returns
 // { sections, summary, source }. The LLM only proposes extra area labels and a
@@ -331,7 +344,7 @@ export async function analyzeNarrative(report, { fetchImpl, makeId } = {}) {
 
   if (doFetch && narrative.trim()) {
     try {
-      const res = await doFetch('/api/draft', {
+      const res = await doFetch(apiUrl('api/draft'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
