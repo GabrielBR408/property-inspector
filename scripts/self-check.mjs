@@ -174,6 +174,53 @@ console.log('\n[8] Run-on, UNPUNCTUATED multi-area dictation splits into one sec
   assert('component word "foundation" does not spawn a false section', oneClause.length === 1 && oneClause[0].key === 'basement', oneClause.map((s) => s.key).join(','))
 }
 
+console.log('\n[9] Punctuated multi-area walkthrough yields one section per area (no commingling)')
+{
+  // The exact live repro: 4 sentences, 4 distinct areas. Sentences 3 & 4 name
+  // areas ("engineers office", "loading dock") that must be recognized so they do
+  // NOT fall through into the previous section (Lobby).
+  const NARR =
+    'On the roof the windscreen needs to be repainted. ' +
+    'Someone put graffiti on one of the columns by the lobby. ' +
+    "The engineers office smells funny and it's likely something from someone's desk. " +
+    'There are bugs in the loading dock and Billy needs to address that.'
+  const secs = segmentNarrative(NARR)
+  const keys = secs.map((s) => s.key)
+  assert('produces exactly four sections', secs.length === 4, `${secs.length}: ${keys.join(',')}`)
+  assert('sections are Roof, Lobby, Engineer\'s Office, Loading Dock in order',
+    JSON.stringify(keys) === JSON.stringify(['roof', 'lobby', 'engineersoffice', 'loadingdock']), keys.join(','))
+  const byKey = Object.fromEntries(secs.map((s) => [s.key, s]))
+  assert('Lobby holds ONLY the graffiti/columns sentence',
+    byKey.lobby && byKey.lobby.text === 'Someone put graffiti on one of the columns by the lobby.', byKey.lobby && byKey.lobby.text)
+  assert('Lobby did NOT swallow the engineers-office sentence', byKey.lobby && !/engineers office/.test(byKey.lobby.text))
+  assert('Lobby did NOT swallow the loading-dock sentence', byKey.lobby && !/loading dock/.test(byKey.lobby.text))
+  assert('Engineer\'s Office holds its own sentence', byKey.engineersoffice && /smells funny/.test(byKey.engineersoffice.text))
+  assert('Loading Dock holds its own sentence', byKey.loadingdock && /bugs in the loading dock/.test(byKey.loadingdock.text))
+  for (const s of secs) assert(`${s.key} slice is faithful`, faithful(NARR, s.text))
+}
+
+console.log('\n[10] Splitter keeps splitting past the FIRST transition (3+ areas in one run-on)')
+{
+  // Unpunctuated run-on naming three areas; iOS-style capitals cue each new one.
+  const RUN = 'The kitchen sink is leaking Then the garage door is broken Also the attic has mold'
+  const secs = segmentNarrative(RUN)
+  assert('all three areas split out (not just the first)', secs.length === 3, secs.map((s) => s.key).join(','))
+  assert('order is kitchen, garage, attic', JSON.stringify(secs.map((s) => s.key)) === JSON.stringify(['kitchen', 'garage', 'attic']), secs.map((s) => s.key).join(','))
+  assert('every slice faithful', secs.every((s) => faithful(RUN, s.text)))
+}
+
+console.log('\n[11] AI-proposed labels feed LIVE (extra vocabulary) segmentation')
+{
+  // "mudroom" and "solarium" aren't in the base vocab; when the narrative names
+  // them and they arrive as AI labels, they become sections live.
+  const NARR = 'The kitchen is dated. The mudroom floor is cracked. The solarium gets great light.'
+  const base = segmentNarrative(NARR)
+  assert('without labels, only base-vocab areas are found', base.map((s) => s.key).join(',') === 'kitchen', base.map((s) => s.key).join(','))
+  const withLabels = segmentNarrative(NARR, ['mudroom', 'solarium'])
+  assert('with AI labels, mudroom + solarium become sections', JSON.stringify(withLabels.map((s) => s.key)) === JSON.stringify(['kitchen', 'mudroom', 'solarium']), withLabels.map((s) => s.key).join(','))
+  assert('label-derived slices stay faithful', withLabels.every((s) => faithful(NARR, s.text)))
+}
+
 // --- Minimal ZIP entry reader ----------------------------------------------
 function unzipEntry(buf, name) {
   let eocd = -1

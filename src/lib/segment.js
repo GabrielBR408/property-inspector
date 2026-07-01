@@ -29,21 +29,45 @@ import { CONDITIONS } from './schema.js'
 // canonical display name -> list of aliases (lowercase, matched on word-ish
 // boundaries). Order within the flat alias list is resolved by earliest match
 // position, then longest alias, so "primary bath" beats "bath".
+// Broad commercial + residential vocabulary. Multi-word aliases are fine — the
+// anchor resolver prefers the earliest match and, at the same position, the
+// longer alias, so "loading dock" beats "dock" and "engineers office" beats
+// "office". The AI label pass can extend this at runtime (buildAliases extras).
 const AREA_DEFS = [
+  // Exterior / structure
   ['Roof', ['roof', 'roofing']],
-  ['Exterior', ['exterior', 'siding', 'facade', 'stucco']],
+  ['Rooftop', ['rooftop', 'roof deck', 'roof top']],
+  ['Exterior', ['exterior', 'siding', 'facade', 'stucco', 'building envelope']],
   ['Foundation', ['foundation', 'crawl space', 'crawlspace']],
-  ['Basement', ['basement']],
+  ['Basement', ['basement', 'cellar', 'sub-basement', 'sublevel']],
   ['Attic', ['attic']],
-  ['Garage', ['garage']],
+  ['Mezzanine', ['mezzanine']],
+  ['Garage', ['garage', 'carport']],
   ['Driveway', ['driveway']],
-  ['Deck / Patio', ['deck', 'patio', 'porch', 'balcony']],
-  ['Yard', ['yard', 'lawn', 'landscaping', 'backyard', 'front yard']],
-  ['Entry / Foyer', ['foyer', 'entryway', 'entry', 'front door']],
-  ['Lobby', ['lobby']],
-  ['Elevator', ['elevator']],
-  ['Mechanical Room', ['mechanical room', 'boiler room', 'utility closet']],
-  ['Parking', ['parking garage', 'parking lot', 'parking']],
+  ['Loading Dock', ['loading dock', 'loading bay', 'dock']],
+  ['Deck / Patio', ['deck', 'patio', 'porch', 'balcony', 'terrace', 'veranda']],
+  ['Yard', ['yard', 'lawn', 'landscaping', 'backyard', 'back yard', 'front yard', 'courtyard', 'grounds']],
+  ['Parking', ['parking garage', 'parking structure', 'parking lot', 'parking']],
+  // Circulation / entry
+  ['Entry / Foyer', ['foyer', 'entryway', 'entrance', 'entry', 'front door', 'vestibule']],
+  ['Lobby', ['elevator lobby', 'lobby']],
+  ['Atrium', ['atrium']],
+  ['Concourse', ['concourse']],
+  ['Elevator', ['elevator', 'lift', 'escalator']],
+  ['Hallway', ['hallway', 'corridor', 'stairwell', 'staircase', 'stairway', 'stairs', 'hall']],
+  // Rooms — commercial
+  ['Engineer\'s Office', ['engineer\'s office', 'engineers office', 'engineering office', 'engineering room']],
+  ['Office', ['office', 'reception', 'reception area', 'front desk', 'cubicle', 'workstation']],
+  ['Conference Room', ['conference room', 'meeting room', 'boardroom', 'board room']],
+  ['Break Room', ['break room', 'breakroom', 'kitchenette', 'lunch room', 'lunchroom']],
+  ['Restroom', ['restroom', 'rest room', 'washroom', 'men\'s room', 'mens room', 'women\'s room', 'womens room']],
+  ['Server Room', ['server room', 'it room', 'data room', 'telecom room', 'idf', 'mdf']],
+  ['Janitor Closet', ['janitor closet', 'janitorial', 'custodial closet', 'custodial']],
+  ['Storage', ['storage room', 'storeroom', 'storage', 'supply room']],
+  ['Common Area', ['common area', 'common room', 'amenity room', 'amenity']],
+  ['Fitness Room', ['fitness center', 'fitness room', 'fitness', 'gym']],
+  ['Pool', ['swimming pool', 'pool']],
+  // Rooms — residential
   ['Living Room', ['living room', 'family room', 'great room']],
   ['Dining Room', ['dining room', 'dining area']],
   ['Kitchen', ['kitchen']],
@@ -51,12 +75,13 @@ const AREA_DEFS = [
   ['Bathroom', ['bathroom', 'bath', 'powder room', 'half bath']],
   ['Primary Bedroom', ['primary bedroom', 'master bedroom', 'primary suite', 'master suite']],
   ['Bedroom', ['bedroom']],
-  ['Hallway', ['hallway', 'corridor', 'stairwell', 'staircase']],
   ['Laundry', ['laundry', 'utility room']],
   ['Pantry / Closet', ['pantry', 'closet']],
-  ['HVAC', ['hvac', 'furnace', 'air conditioner', 'air conditioning', 'ac unit', 'thermostat']],
+  // Building systems
+  ['Mechanical Room', ['mechanical room', 'mechanical', 'boiler room', 'boiler', 'utility closet']],
+  ['Electrical Room', ['electrical room', 'electrical panel', 'electrical', 'breaker', 'wiring']],
+  ['HVAC', ['hvac', 'furnace', 'air conditioner', 'air conditioning', 'ac unit', 'thermostat', 'rooftop unit', 'rtu']],
   ['Water Heater', ['water heater', 'hot water']],
-  ['Electrical', ['electrical panel', 'electrical', 'breaker', 'wiring']],
   ['Plumbing', ['plumbing']],
   ['Windows', ['windows', 'window']],
   ['Fireplace', ['fireplace', 'chimney']]
@@ -318,14 +343,17 @@ export async function analyzeNarrative(report, { fetchImpl, makeId } = {}) {
     } catch (_e) { /* fall back to deterministic */ }
   }
 
-  const extras = llm && Array.isArray(llm.areas) ? llm.areas.filter((a) => typeof a === 'string') : []
-  const fresh = segmentNarrative(narrative, extras)
+  // Accumulate AI-proposed labels with any already discovered, so they keep
+  // expanding LIVE segmentation (see App.jsx resegment) — not just this pass.
+  const llmAreas = llm && Array.isArray(llm.areas) ? llm.areas.filter((a) => typeof a === 'string') : []
+  const areas = [...new Set([...(report.aiAreas || []), ...llmAreas])]
+  const fresh = segmentNarrative(narrative, areas)
   const merged = mergeSections(report.sections || [], fresh, makeId || ((k) => `sec_${k}`))
   const summary = (llm && typeof llm.summary === 'string' && llm.summary.trim())
     ? llm.summary.trim()
     : deterministicSummary(report, merged)
 
-  return { sections: merged, summary, source: llm ? 'ai' : 'deterministic' }
+  return { sections: merged, summary, source: llm ? 'ai' : 'deterministic', areas }
 }
 
 // --- Summaries & tallies (section-based) ------------------------------------

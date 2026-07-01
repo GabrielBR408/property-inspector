@@ -32,6 +32,7 @@ export function newReport(header = {}) {
     date: header.date || '',
     walkthrough: '', // the narrative; sections are derived from this
     summary: '',
-    sections: [] // [{ id, key, area, name, text, condition, photos, *Edited flags }]
+    sections: [], // [{ id, key, area, name, text, condition, photos, *Edited flags }]
+    aiAreas: [] // AI-proposed area labels; extend LIVE segmentation vocabulary
   }
 }

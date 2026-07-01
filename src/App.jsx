@@ -14,8 +14,10 @@ const sectionId = (key) => `sec_${key}`
 
 // Re-segment the narrative and merge with existing sections so live edits and
 // photos survive. Runs deterministically on every keystroke/dictation — no network.
+// AI-proposed labels (report.aiAreas) extend the LIVE vocabulary so multi-word
+// areas surfaced by a prior Draft (e.g. "loading dock") keep splitting as you talk.
 function resegment(report, narrative) {
-  const fresh = segmentNarrative(narrative)
+  const fresh = segmentNarrative(narrative, report.aiAreas || [])
   return mergeSections(report.sections || [], fresh, sectionId)
 }
 
@@ -83,8 +85,9 @@ export default function App() {
   const onDraft = async () => {
     setDrafting(true); setDraftMsg('')
     try {
-      const { sections, summary, source } = await analyzeNarrative(report, { makeId: sectionId })
-      setReport((r) => ({ ...r, sections, summary }))
+      const { sections, summary, source, areas } = await analyzeNarrative(report, { makeId: sectionId })
+      // Persist AI-proposed labels so they extend LIVE segmentation going forward.
+      setReport((r) => ({ ...r, sections, summary, aiAreas: areas || r.aiAreas }))
       setDraftMsg(source === 'ai'
         ? 'Drafted with AI — sections and summary generated. Everything below is editable.'
         : 'Drafted offline (deterministic) — sections and summary generated. Everything below is editable.')
