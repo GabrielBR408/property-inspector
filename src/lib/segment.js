@@ -97,7 +97,15 @@ export function slugify(s) {
 // Build the flat alias table, optionally augmented with extra area labels the
 // LLM proposed. An extra label only ever produces a section if it actually
 // appears in the narrative, so invented areas are impossible.
+// Memoized: re-segmentation runs on every keystroke, so rebuilding + re-sorting
+// the table (and re-compiling ~150 alias regexes in findAllAreas) each time was
+// a per-keystroke cost that grew with narrative length. The table for a given
+// extra-label set is immutable, so cache it (with a precompiled regex per alias).
+const _aliasCache = new Map()
 function buildAliases(extraLabels = []) {
+  const cacheKey = JSON.stringify(extraLabels)
+  const hit = _aliasCache.get(cacheKey)
+  if (hit) return hit
   const flat = []
   for (const [area, aliases] of AREA_DEFS) {
     const key = slugify(area)
@@ -114,6 +122,9 @@ function buildAliases(extraLabels = []) {
   }
   // Longest alias first so specific phrases win ties at the same index.
   flat.sort((a, b) => b.alias.length - a.alias.length)
+  for (const entry of flat) entry.re = new RegExp(`\\b${escapeRegExp(entry.alias)}\\b`, 'g')
+  if (_aliasCache.size > 32) _aliasCache.clear()
+  _aliasCache.set(cacheKey, flat)
   return flat
 }
 
@@ -151,7 +162,8 @@ function findAllAreas(text, aliases) {
   const lc = text.toLowerCase()
   const found = []
   for (const entry of aliases) {
-    const re = new RegExp(`\\b${escapeRegExp(entry.alias)}\\b`, 'g')
+    const re = entry.re // precompiled in buildAliases; shared, so reset state
+    re.lastIndex = 0
     let m
     while ((m = re.exec(lc)) !== null) {
       found.push({ start: m.index, end: m.index + entry.alias.length, area: entry.area, key: entry.key, aliasLen: entry.alias.length })
@@ -167,7 +179,10 @@ function findAllAreas(text, aliases) {
     // Fold a trailing unit designator into a Suite anchor, so "suite 210" and
     // "suite 200" become DISTINCT sections named "Suite 210" / "Suite 200".
     if (a.key === 'suite') {
-      const after = text.slice(a.end).match(/^\s+(\d{1,5}[A-Za-z]?|[A-Z])\b/)
+      // Letter designators: any case (dictation lowercases), but NOT lowercase
+      // "a"/"i" — those are almost always the article/pronoun ("in the suite a
+      // leak was found"), not a suite letter.
+      const after = text.slice(a.end).match(/^\s+(\d{1,5}[A-Za-z]?|[A-Z]|[b-hj-z])\b/)
       if (after) {
         a.end += after[0].length
         a.area = `Suite ${after[1].toUpperCase()}`
@@ -245,9 +260,9 @@ export function splitSentences(text) {
 // defect noun elsewhere in the sentence ("...but there's some cracking"). Ordered
 // worst-first so a stated bad rating still dominates a stated good one.
 const EXPLICIT_RE = [
-  ['Poor', /\b(in poor condition|poor condition|is (?:in )?poor|in bad condition|bad condition|is bad|is damaged|is broken|non[- ]?functional|not functional)\b/],
-  ['Fair', /\b(in fair condition|fair condition|is (?:in )?fair|adequate|serviceable|passable)\b/],
-  ['Good', /\b(in (?:good|great|excellent) condition|(?:good|great|excellent) condition|is (?:in )?(?:good|great|excellent)|in good shape|good shape|excellent|pristine|like new|well[- ]maintained|no issues|works well|fully functional)\b/]
+  ['Poor', /\b(in poor condition|poor condition|is (?:in )?poor|in bad condition|bad condition|is bad|is damaged|is broken|non[- ]?functional|not functional)\b/g],
+  ['Fair', /\b(in fair condition|fair condition|is (?:in )?fair|adequate|serviceable|passable)\b/g],
+  ['Good', /\b(in (?:good|great|excellent) condition|(?:good|great|excellent) condition|is (?:in )?(?:good|great|excellent)|in good shape|good shape|excellent|pristine|like new|well[- ]maintained|no issues|works well|fully functional)\b/g]
 ]
 
 // Incidental keyword scan (fallback), matched with WORD BOUNDARIES so "dated"
@@ -272,17 +287,48 @@ const COND_KEYWORDS = {
 const _wordReCache = new Map()
 function wordRe(k) {
   let re = _wordReCache.get(k)
-  if (!re) { re = new RegExp(`\\b${escapeRegExp(k)}\\b`); _wordReCache.set(k, re) }
+  if (!re) { re = new RegExp(`\\b${escapeRegExp(k)}\\b`, 'g'); _wordReCache.set(k, re) }
   return re
+}
+
+// Negation guard: a cue directly preceded (within ~2 words) by a negator is a
+// statement of ABSENCE ("no water damage", "not broken") and must not fire.
+const NEGATOR_WINDOW_RE = /\b(?:no|not|isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent|without|never|free\s+of|free\s+from)\s+(?:\w+\s+){0,2}$/
+function isNegated(lc, index) {
+  return NEGATOR_WINDOW_RE.test(lc.slice(0, index))
+}
+
+// A NEGATED good-rating ("not in good condition", "isn't looking great") is a
+// stated downgrade — rate Fair, never let the embedded "good" read as Good.
+const NEGATED_GOOD_RE = /\b(?:not|isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent|no\s+longer)\s+(?:\w+\s+){0,2}?(?:in\s+)?(?:good|great|excellent|pristine|well[- ]maintained|like\s+new)\b/
+
+// First non-negated match of `re` in `lc`, or null.
+function unnegatedMatch(lc, re) {
+  re.lastIndex = 0
+  let m
+  const global = re.global
+  while ((m = re.exec(lc)) !== null) {
+    if (!isNegated(lc, m.index)) return m
+    if (!global) return null // non-global regex: only the first match is visible
+    if (m.index === re.lastIndex) re.lastIndex++
+  }
+  return null
 }
 
 export function deriveCondition(text) {
   const lc = ` ${String(text || '').toLowerCase()} `
-  // 1. Explicit self-rating wins over incidental defect words.
-  for (const [level, re] of EXPLICIT_RE) { if (re.test(lc)) return level }
-  // 2. Fallback: incidental keywords (word-boundary), worst severity first.
+  // 1. Explicit self-rating wins over incidental defect words. A stated Poor
+  //    still dominates; a negated Good ("not in good condition") rates Fair.
+  const explicitPoor = EXPLICIT_RE[0]
+  if (unnegatedMatch(lc, explicitPoor[1])) return 'Poor'
+  if (NEGATED_GOOD_RE.test(lc)) return 'Fair'
+  for (const [level, re] of EXPLICIT_RE.slice(1)) { if (unnegatedMatch(lc, re)) return level }
+  // 2. Fallback: incidental keywords (word-boundary), worst severity first,
+  //    skipping negated occurrences ("no water damage" is not damage).
   for (const level of ['Poor', 'Fair', 'Good']) {
-    if (COND_KEYWORDS[level].some((k) => wordRe(k).test(lc))) return level
+    for (const k of COND_KEYWORDS[level]) {
+      if (unnegatedMatch(lc, wordRe(k))) return level
+    }
   }
   return 'N/A'
 }
@@ -367,12 +413,27 @@ export function mergeSections(prev = [], fresh = [], makeId = (k) => `sec_${k}`)
     }
   }
 
-  // Retain previously-created sections that carry photos but are no longer
-  // referenced by the narrative, so a user never loses attached images.
+  // Retain previously-created sections that are no longer referenced by the
+  // narrative but carry user work — photos OR any user edit (text, name,
+  // condition) — so re-segmentation never destroys something the user did.
   for (const p of prev) {
-    if (!freshByKey.has(p.key) && (p.photos || []).length > 0) out.push(p)
+    const hasUserWork = (p.photos || []).length > 0 || p.textEdited || p.nameEdited || p.conditionEdited
+    if (!freshByKey.has(p.key) && hasUserWork) out.push(p)
   }
   return out
+}
+
+// --- Removed-section suppression ---------------------------------------------
+// The user removed a section explicitly; re-segmentation must not resurrect it
+// on the next keystroke. Each entry is { key, at } where `at` is the narrative
+// length at removal time. An entry stays active (still suppresses) until the
+// narrative mentions that area again AT OR AFTER `at` — i.e. the user talking
+// about the area anew revives it, but the text that existed at removal doesn't.
+export function effectiveRemovedKeys(removedKeys = [], narrative = '', extraLabels = []) {
+  const list = (removedKeys || []).filter((r) => r && r.key)
+  if (!list.length) return []
+  const anchors = findAllAreas(String(narrative || ''), buildAliases(extraLabels))
+  return list.filter((r) => !anchors.some((a) => a.key === r.key && a.start >= (r.at || 0)))
 }
 
 // Base-aware URL for the serverless endpoint. Under a sub-path deploy the app is
@@ -421,7 +482,9 @@ export async function analyzeNarrative(report, { fetchImpl, makeId } = {}) {
   // expanding LIVE segmentation (see App.jsx resegment) — not just this pass.
   const llmAreas = llm && Array.isArray(llm.areas) ? llm.areas.filter((a) => typeof a === 'string') : []
   const areas = [...new Set([...(report.aiAreas || []), ...llmAreas])]
-  const fresh = segmentNarrative(narrative, areas)
+  // Respect user-removed sections here too, or Draft would resurrect them.
+  const removed = effectiveRemovedKeys(report.removedKeys || [], narrative, areas)
+  const fresh = segmentNarrative(narrative, areas).filter((s) => !removed.some((r) => r.key === s.key))
   const merged = mergeSections(report.sections || [], fresh, makeId || ((k) => `sec_${k}`))
   const summary = (llm && typeof llm.summary === 'string' && llm.summary.trim())
     ? llm.summary.trim()

@@ -33,6 +33,7 @@ export function newReport(header = {}) {
     walkthrough: '', // the narrative; sections are derived from this
     summary: '',
     sections: [], // [{ id, key, area, name, text, condition, photos, *Edited flags }]
-    aiAreas: [] // AI-proposed area labels; extend LIVE segmentation vocabulary
+    aiAreas: [], // AI-proposed area labels; extend LIVE segmentation vocabulary
+    removedKeys: [] // [{ key, at }] sections the user removed; suppresses re-detection (segment.js effectiveRemovedKeys)
   }
 }

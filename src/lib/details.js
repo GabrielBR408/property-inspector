@@ -29,7 +29,19 @@ function looksLikeAddress(s) {
 
 // --- Date parsing -----------------------------------------------------------
 function pad(n) { return String(n).padStart(2, '0') }
-function isoFrom(y, m, d) { return `${y}-${pad(m)}-${pad(d)}` }
+// Validated: rejects impossible calendar dates ("13/45/26") instead of emitting
+// garbage ISO strings that blank the date input but leak into exports.
+function isoFrom(y, m, d) {
+  y = Number(y); m = Number(m); d = Number(d)
+  if (!Number.isInteger(y) || y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return ''
+  const dt = new Date(y, m - 1, d)
+  if (dt.getMonth() !== m - 1 || dt.getDate() !== d) return '' // e.g. Feb 30
+  return `${y}-${pad(m)}-${pad(d)}`
+}
+
+// "July 4 Plaza" / "1200 March 5th Avenue" are street names, not dates: a
+// month+day expression immediately followed by a street suffix must not parse.
+const STREET_SUFFIX_RE = /^\s+(?:st|street|ave|avenue|blvd|boulevard|rd|road|dr|drive|ln|lane|way|ct|court|plaza|place|pl|terrace|ter|pkwy|parkway|circle|cir|sq|square|alley|aly)\b/i
 
 function shiftDay(todayIso, delta) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(todayIso || '')
@@ -42,9 +54,12 @@ function shiftDay(todayIso, delta) {
 export function extractDate(text, todayIso) {
   const lc = text.toLowerCase()
   const candidates = []
-  const push = (re, toIso) => {
+  const push = (re, toIso, { guardStreet = false } = {}) => {
     const m = re.exec(lc)
-    if (m) { const iso = toIso(m); if (iso) candidates.push({ iso, index: m.index, length: m[0].length }) }
+    if (!m) return
+    if (guardStreet && STREET_SUFFIX_RE.test(lc.slice(m.index + m[0].length))) return
+    const iso = toIso(m)
+    if (iso) candidates.push({ iso, index: m.index, length: m[0].length })
   }
   const thisYear = /^(\d{4})-/.test(todayIso || '') ? Number(todayIso.slice(0, 4)) : new Date().getFullYear()
 
@@ -53,17 +68,19 @@ export function extractDate(text, todayIso) {
   push(/\byesterday\b/, () => shiftDay(todayIso, -1))
   push(/\b(\d{4})-(\d{2})-(\d{2})\b/, (m) => isoFrom(m[1], Number(m[2]), Number(m[3])))
   push(/\b(\d{1,2})[/](\d{1,2})[/](\d{2,4})\b/, (m) => {
-    const y = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])
+    // Two-digit years pivot at 70 ("99" is 1999, not 2099 — nobody dates an
+    // inspection 73 years out).
+    const y = m[3].length === 2 ? (Number(m[3]) >= 70 ? 1900 : 2000) + Number(m[3]) : Number(m[3])
     return isoFrom(y, Number(m[1]), Number(m[2]))
   })
   push(new RegExp(`\\b(${MONTHS.join('|')})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?\\b`), (m) => {
     const mo = MONTHS.indexOf(m[1]) + 1
     return isoFrom(m[3] ? Number(m[3]) : thisYear, mo, Number(m[2]))
-  })
+  }, { guardStreet: true })
   push(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${MONTHS.join('|')})(?:,?\\s+(\\d{4}))?\\b`), (m) => {
     const mo = MONTHS.indexOf(m[2]) + 1
     return isoFrom(m[3] ? Number(m[3]) : thisYear, mo, Number(m[1]))
-  })
+  }, { guardStreet: true })
 
   if (!candidates.length) return null
   candidates.sort((a, b) => a.index - b.index)

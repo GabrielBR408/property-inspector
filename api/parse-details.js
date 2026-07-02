@@ -25,8 +25,10 @@ export default async function handler(req, res) {
     return res.end(JSON.stringify({ error: 'Method not allowed' }))
   }
   const body = req.body || {}
-  const transcript = typeof body.transcript === 'string' ? body.transcript : ''
-  const todayIso = typeof body.today === 'string' ? body.today : ''
+  // Cap inputs — publicly reachable endpoint; a dictated details utterance is
+  // a sentence or two, never kilobytes.
+  const transcript = typeof body.transcript === 'string' ? body.transcript.slice(0, 2000) : ''
+  const todayIso = typeof body.today === 'string' ? body.today.slice(0, 40) : ''
   const apiKey = process.env.ANTHROPIC_API_KEY
   const empty = { property: '', address: '', inspector: '', date: '', source: 'deterministic' }
 

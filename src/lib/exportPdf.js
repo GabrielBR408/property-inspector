@@ -5,7 +5,7 @@
 // jsPDF renderer iterates the SAME fragments, so parity is guaranteed.
 
 import { buildExportModel } from './exportModel.js'
-import { dataUrlToBytes, imageSize, fitBox } from './imageMeta.js'
+import { dataUrlParts, dataUrlToBytes, imageSize, fitBox } from './imageMeta.js'
 
 const NAVY = [31, 41, 55]
 const ACCENT = [71, 85, 105]
@@ -99,19 +99,32 @@ async function buildPdfDoc(reportOrModel) {
         ensure(12); doc.text(ln.text, marginX, y); y += 14
       } else {
         ensure(thumb + capH + 8)
+        // Track failures so a photo jsPDF can't decode is REPORTED, not silently
+        // dropped (parity with the DOCX exporter's fallback note).
+        let failed = photos.length - renderable.length
         for (const p of renderable) {
+          // Validate BEFORE addImage: jsPDF does not throw on undecodable bytes,
+          // it silently embeds garbage. Only PNG/JPEG with parseable dimensions
+          // (i.e. a real header) are embeddable.
+          const parts = dataUrlParts(p.dataUrl)
+          const size = imageSize(dataUrlToBytes(p.dataUrl))
+          if (!parts || !size || !/image\/(png|jpe?g)/.test(parts.mime)) { failed += 1; continue }
           if (px + thumb > marginX + maxW) { px = marginX; y += thumb + capH + 8; ensure(thumb + capH + 8) }
           try {
-            const fmt = p.dataUrl.includes('image/png') ? 'PNG' : 'JPEG'
+            const fmt = parts.mime.includes('png') ? 'PNG' : 'JPEG'
             // Preserve the photo's aspect ratio inside the thumb box.
-            const { width, height } = fitBox(imageSize(dataUrlToBytes(p.dataUrl)), thumb, thumb)
+            const { width, height } = fitBox(size, thumb, thumb)
             doc.addImage(p.dataUrl, fmt, px, y, width, height)
             doc.setFont('helvetica', 'italic'); doc.setFontSize(7); doc.setTextColor(...MUTED)
             doc.text(String(p.name || 'photo').slice(0, 22), px, y + thumb + 9)
-          } catch (_e) { /* skip unrenderable */ }
-          px += thumb + 8
+            px += thumb + 8 // advance only on success — no blank gap for a failed embed
+          } catch (_e) { failed += 1 }
         }
         y += thumb + capH + 10
+        if (failed > 0) {
+          doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(...MUTED)
+          ensure(12); doc.text(`${failed} photo(s) attached (could not be embedded)`, marginX, y); y += 14
+        }
       }
     }
   }

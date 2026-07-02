@@ -3,7 +3,7 @@ import SectionCard from './components/SectionCard.jsx'
 import VoiceButton from './components/VoiceButton.jsx'
 import { newReport } from './lib/schema.js'
 import { fileToPhoto } from './lib/db.js'
-import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey } from './lib/segment.js'
+import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys } from './lib/segment.js'
 import { downloadPdf } from './lib/exportPdf.js'
 import { downloadDocx } from './lib/exportDocx.js'
 import { saveReport, loadReport, clearReport } from './lib/db.js'
@@ -11,15 +11,25 @@ import { registerPWA } from './pwa/registerUpdate.js'
 import { parseDetails, parseDetailsSmart } from './lib/details.js'
 import { track } from './lib/track.js'
 
-const todayISO = () => new Date().toISOString().slice(0, 10)
+// LOCAL calendar date — not toISOString(), which is UTC and rolls to tomorrow
+// during evening inspections in any timezone west of Greenwich.
+const todayISO = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 const sectionId = (key) => `sec_${key}`
 
 // Re-segment the narrative and merge with existing sections so live edits and
 // photos survive. Runs deterministically on every keystroke/dictation — no network.
 // AI-proposed labels (report.aiAreas) extend the LIVE vocabulary so multi-word
 // areas surfaced by a prior Draft (e.g. "loading dock") keep splitting as you talk.
+// Sections the user removed stay removed (report.removedKeys) until the area is
+// mentioned anew AFTER the removal point — so a deleted section doesn't
+// resurrect on the next keystroke, but talking about the area again revives it.
 function resegment(report, narrative) {
-  const fresh = segmentNarrative(narrative, report.aiAreas || [])
+  const labels = report.aiAreas || []
+  const removed = effectiveRemovedKeys(report.removedKeys || [], narrative, labels)
+  const fresh = segmentNarrative(narrative, labels).filter((s) => !removed.some((r) => r.key === s.key))
   return mergeSections(report.sections || [], fresh, sectionId)
 }
 
@@ -28,9 +38,14 @@ export default function App() {
   const [drafting, setDrafting] = useState(false)
   const [draftMsg, setDraftMsg] = useState('')
   const [exporting, setExporting] = useState('')
+  const [exportMsg, setExportMsg] = useState('')
   const [update, setUpdate] = useState(null)
   const loaded = useRef(false)
   const lastSectionCount = useRef(0)
+  // Always-current report for callbacks that fire from async browser events
+  // (e.g. speech-recognition onend), where a render closure could be stale.
+  const reportRef = useRef(report)
+  useEffect(() => { reportRef.current = report }, [report])
 
   useEffect(() => {
     track('app_opened')
@@ -80,8 +95,11 @@ export default function App() {
     if (!t) return
     try {
       // Pass the on-screen values so the AI enhancer can only fill fields that
-      // are blank everywhere — it can never replace what the user typed.
-      const current = { property: report.property, address: report.address, inspector: report.inspector, date: report.date }
+      // are blank everywhere — it can never replace what the user typed. Read
+      // via ref: this fires from recognition onend, after the last chunk's
+      // state update, which a render closure would not yet see.
+      const cur = reportRef.current
+      const current = { property: cur.property, address: cur.address, inspector: cur.inspector, date: cur.date }
       const p = await parseDetailsSmart(t, { today: todayISO(), current })
       applyDetails(p)
     } catch (_e) { /* deterministic fill already applied live */ }
@@ -100,8 +118,18 @@ export default function App() {
 
   const setSection = (id, next) =>
     setReport((r) => ({ ...r, sections: r.sections.map((s) => (s.id === id ? next : s)) }))
-  const removeSection = (id) =>
-    setReport((r) => ({ ...r, sections: r.sections.filter((s) => s.id !== id) }))
+  const removeSection = (id) => {
+    const target = report.sections.find((s) => s.id === id)
+    if (!target) return
+    const hasWork = (target.photos || []).length > 0 || target.textEdited || target.nameEdited
+    if (hasWork && !window.confirm(`Remove "${target.name}"? Its photos and edits will be discarded.`)) return
+    setReport((r) => ({
+      ...r,
+      sections: r.sections.filter((s) => s.id !== id),
+      // Record the removal so re-segmentation doesn't resurrect the section.
+      removedKeys: [...(r.removedKeys || []), { key: target.key, at: (r.walkthrough || '').length }]
+    }))
+  }
 
   // Unfiled photo → most recent section, or a General bucket if none yet.
   const addUnfiledPhoto = async (fileList) => {
@@ -147,13 +175,15 @@ export default function App() {
 
   const onExport = async (kind) => {
     setExporting(kind)
+    setExportMsg('')
     try {
       const base = (report.property || report.address || 'inspection').replace(/[^\w.-]+/g, '_').slice(0, 40)
       if (kind === 'pdf') await downloadPdf(report, `${base}.pdf`)
       else await downloadDocx(report, `${base}.docx`)
       track(kind === 'pdf' ? 'export_pdf' : 'export_docx')
     } catch (e) {
-      setDraftMsg(`Export failed: ${String(e && e.message ? e.message : e)}`)
+      // Shown at the export buttons (not the Draft card) so the user sees it.
+      setExportMsg(`Export failed: ${String(e && e.message ? e.message : e)}`)
       track('error', { reason: 'export_failed' })
     } finally { setExporting('') }
   }
@@ -168,8 +198,9 @@ export default function App() {
   }
 
   const unfiledRef = useRef(null)
-  const t = tallyConditions(report.sections)
   const named = report.sections.filter((s) => s.key !== 'general')
+  // Tally the same set the "areas detected" count describes.
+  const t = tallyConditions(named)
 
   return (
     <main className="page">
@@ -291,6 +322,7 @@ export default function App() {
             {exporting === 'docx' ? 'Preparing DOCX…' : '⬇ Editable Word (.docx)'}
           </button>
         </div>
+        {exportMsg && <p className="generate-msg generate-msg--info">{exportMsg}</p>}
         <button type="button" className="reset-link" onClick={onReset}>Start new inspection</button>
       </section>
 

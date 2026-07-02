@@ -3,14 +3,16 @@
 
 export function registerPWA(onNeedRefresh) {
   if (typeof window === 'undefined') return () => {}
-  let updateSW = () => {}
   import('virtual:pwa-register')
     .then(({ registerSW }) => {
-      updateSW = registerSW({
+      const updateSW = registerSW({
         immediate: true,
         onNeedRefresh() { onNeedRefresh && onNeedRefresh(() => updateSW(true)) }
       })
     })
     .catch(() => { /* PWA not built in dev — ignore */ })
-  return () => updateSW(true)
+  // Disposer is a no-op: applying the update belongs ONLY to the callback the
+  // banner exposes. (Previously this returned updateSW(true) — an effect
+  // CLEANUP that force-reloaded the page.)
+  return () => {}
 }

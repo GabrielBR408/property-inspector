@@ -42,7 +42,15 @@ export default async function handler(req, res) {
     return res.end(JSON.stringify({ error: 'Method not allowed' }))
   }
   const body = req.body || {}
-  const narrative = typeof body.narrative === 'string' ? body.narrative : ''
+  // Cap inputs: this endpoint is publicly reachable, so unbounded text would be
+  // an open invitation to burn API credits. A real walkthrough fits well inside
+  // 16k chars; header fields inside 200.
+  const clip = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '')
+  const narrative = clip(body.narrative, 16000)
+  body.property = clip(body.property, 200)
+  body.address = clip(body.address, 200)
+  body.inspector = clip(body.inspector, 200)
+  body.date = clip(body.date, 40)
   const apiKey = process.env.ANTHROPIC_API_KEY
 
   if (!apiKey || !narrative.trim()) {

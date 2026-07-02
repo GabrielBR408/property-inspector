@@ -20,6 +20,11 @@ export function isVoiceSupported() {
 // onEnd() fires once when recognition stops (user toggle or natural end) — used
 // to trigger a one-shot AI enhancement pass. The hook exposes
 // { listening, interim, start, stop, supported }.
+// Browsers run at most one SpeechRecognition at a time; when a second voice
+// button starts, cleanly stop whichever instance is live (its own onend still
+// fires, so its UI resets and its onEnd pass runs).
+let stopActive = null
+
 export function useVoice(onFinal, onEnd) {
   const [listening, setListening] = useState(false)
   const [interim, setInterim] = useState('')
@@ -37,7 +42,15 @@ export function useVoice(onFinal, onEnd) {
   }, [])
 
   const start = useCallback(() => {
-    if (recRef.current) stop()
+    const old = recRef.current
+    if (old) {
+      // Detach before replacing: the old instance's late async onend must not
+      // flip the NEW session's button back to idle (or re-fire onEnd).
+      old.onresult = null; old.onerror = null; old.onend = null
+      try { old.stop() } catch (_e) { /* ignore */ }
+      recRef.current = null
+    }
+    if (stopActive) { try { stopActive() } catch (_e) { /* ignore */ } }
     const rec = getRecognition()
     if (!rec) return
     rec.continuous = true
@@ -57,9 +70,16 @@ export function useVoice(onFinal, onEnd) {
       setInterim(interimText)
     }
     rec.onerror = () => { setListening(false); setInterim(''); track('error', { reason: 'dictation_error' }) }
-    rec.onend = () => { setListening(false); setInterim(''); if (onEndRef.current) onEndRef.current() }
+    rec.onend = () => {
+      if (stopActive === stopThis) stopActive = null
+      setListening(false); setInterim('')
+      if (onEndRef.current) onEndRef.current()
+    }
     recRef.current = rec
-    try { rec.start(); setListening(true); track('dictation_started') } catch (_e) { setListening(false); track('error', { reason: 'dictation_start_failed' }) }
+    const stopThis = () => { try { rec.stop() } catch (_e) { /* ignore */ } }
+    try {
+      rec.start(); setListening(true); stopActive = stopThis; track('dictation_started')
+    } catch (_e) { setListening(false); track('error', { reason: 'dictation_start_failed' }) }
   }, [stop])
 
   useEffect(() => () => stop(), [stop])

@@ -80,9 +80,13 @@ export function buildDocxDocument(reportOrModel) {
         try {
           const parts = dataUrlParts(p && p.dataUrl)
           const bytes = dataUrlToBytes(p && p.dataUrl)
-          if (!parts || !bytes) continue
+          // Only PNG/JPEG with a parseable header embed reliably; anything else
+          // (e.g. webp that failed downscale) falls through to the count note
+          // instead of risking a corrupt document.
+          const size = imageSize(bytes)
+          if (!parts || !bytes || !size || !/image\/(png|jpe?g)/.test(parts.mime)) continue
           const type = parts.mime.includes('png') ? 'png' : 'jpg'
-          const { width, height } = fitBox(imageSize(bytes), 280, 210)
+          const { width, height } = fitBox(size, 280, 210)
           children.push(new Paragraph({
             spacing: { before: 80 },
             children: [new ImageRun({ type, data: bytes, transformation: { width, height } })]

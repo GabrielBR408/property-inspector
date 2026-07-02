@@ -9,9 +9,10 @@ import zlib from 'node:zlib'
 import { CONDITIONS } from '../src/lib/schema.js'
 import {
   segmentNarrative, splitSentences, deriveCondition, analyzeNarrative,
-  tallyConditions, deterministicSummary, lastMentionedKey
+  tallyConditions, deterministicSummary, lastMentionedKey, mergeSections,
+  effectiveRemovedKeys
 } from '../src/lib/segment.js'
-import { parseDetails, parseDetailsSmart } from '../src/lib/details.js'
+import { parseDetails, parseDetailsSmart, extractDate } from '../src/lib/details.js'
 import { buildExportModel, exportSectionKeys } from '../src/lib/exportModel.js'
 import { renderPdfLines, pdfToArrayBuffer } from '../src/lib/exportPdf.js'
 import { docxToBuffer } from '../src/lib/exportDocx.js'
@@ -388,6 +389,87 @@ console.log('\n[18] Real PDF bytes: every section, details, photo + caption (hea
   assert('pdf embeds the photo as an image object', s.includes('/Subtype /Image'))
   assert('pdf carries the photo caption', s.includes('kitchen-sink.png'))
   assert('pdf has no "undefined" text', !s.includes('undefined'))
+}
+
+console.log('\n[19] User work survives re-segmentation; removed sections stay removed')
+{
+  // An EDITED section (no photos) must be retained when its area word drops out
+  // of the narrative — user edits are never silently destroyed.
+  let ui = mergeSections([], segmentNarrative('the kitchen sink leaks'))
+  ui = ui.map((s) => (s.key === 'kitchen' ? { ...s, text: 'MY CAREFUL EDIT', textEdited: true } : s))
+  const afterEdit = mergeSections(ui, segmentNarrative('the sink leaks'))
+  const keptKitchen = afterEdit.find((s) => s.key === 'kitchen')
+  assert('edited section survives narrative losing its area word', !!keptKitchen)
+  assert('the user\'s edited text is intact', keptKitchen && keptKitchen.text === 'MY CAREFUL EDIT', keptKitchen && keptKitchen.text)
+  // An UNTOUCHED, photoless section still disappears with its area word.
+  const plain = mergeSections(mergeSections([], segmentNarrative('the kitchen sink leaks')), segmentNarrative('the sink leaks'))
+  assert('untouched photoless section still follows the narrative', !plain.some((s) => s.key === 'kitchen'), plain.map((s) => s.key).join(','))
+
+  // Removal suppression: a removed key stays removed against the SAME narrative…
+  const narr = 'the kitchen sink leaks'
+  const removed = [{ key: 'kitchen', at: narr.length }]
+  assert('removed key stays suppressed on re-segmentation', effectiveRemovedKeys(removed, narr).length === 1)
+  // …but mentioning the area anew (after the removal point) revives it.
+  assert('a NEW mention after removal revives the area', effectiveRemovedKeys(removed, `${narr} back in the kitchen now`).length === 0)
+  // The Draft (AI/deterministic analysis) path must respect removals too.
+  const rep = { walkthrough: narr, sections: [], removedKeys: removed, aiAreas: [] }
+  const { sections: drafted } = await analyzeNarrative(rep, { fetchImpl: async () => ({ ok: false }), makeId: (k) => `sec_${k}` })
+  assert('Draft does not resurrect a removed section', !drafted.some((s) => s.key === 'kitchen'), drafted.map((s) => s.key).join(','))
+}
+
+console.log('\n[20] deriveCondition understands negation')
+{
+  assert('"not in good condition" -> Fair (not Good)', deriveCondition('The deck is not in good condition') === 'Fair', deriveCondition('The deck is not in good condition'))
+  assert('"isn\'t looking great" -> Fair', deriveCondition("the hallway carpet isn't looking great") === 'Fair', deriveCondition("the hallway carpet isn't looking great"))
+  assert('"no water damage" is NOT Poor', deriveCondition('no water damage was observed anywhere') === 'N/A', deriveCondition('no water damage was observed anywhere'))
+  assert('"not loose" is NOT Poor', deriveCondition('the railing is not loose') === 'N/A', deriveCondition('the railing is not loose'))
+  assert('"without any cracks" is NOT Poor', deriveCondition('the slab is without any cracks') === 'N/A', deriveCondition('the slab is without any cracks'))
+  // Un-negated cues still fire exactly as before.
+  assert('"in good condition" still -> Good', deriveCondition('the unit is in good condition') === 'Good')
+  assert('"no issues" still -> Good', deriveCondition('roof recently replaced, no issues') === 'Good')
+  assert('a real leak still -> Poor', deriveCondition('there is a leak here') === 'Poor')
+  assert('negated good + real defect -> stated Poor wins', deriveCondition('not in great shape, the wall is in poor condition') === 'Poor', deriveCondition('not in great shape, the wall is in poor condition'))
+}
+
+console.log('\n[21] Date parsing: impossible dates rejected, street names are not dates')
+{
+  const TODAY = '2026-07-02'
+  assert('impossible "13/45/26" yields NO date', extractDate('13/45/26', TODAY) === null)
+  assert('Feb 30 yields NO date', extractDate('2/30/2026', TODAY) === null)
+  assert('two-digit year 99 -> 1999 (not 2099)', extractDate('6/3/99', TODAY).iso === '1999-06-03', JSON.stringify(extractDate('6/3/99', TODAY)))
+  const plaza = parseDetails('Property is July 4 Plaza, 12 Oak St', { today: TODAY })
+  assert('"July 4 Plaza" stays a property name, not a date', plaza.property === 'July 4 Plaza' && plaza.date === '', JSON.stringify(plaza))
+  const ave = parseDetails('address is 1200 March 5th Avenue', { today: TODAY })
+  assert('"March 5th Avenue" stays an address, not a date', ave.address === '1200 March 5th Avenue' && ave.date === '', JSON.stringify(ave))
+  assert('a real month date still parses', parseDetails('date March 5 2026', { today: TODAY }).date === '2026-03-05')
+  assert('"today" still resolves', parseDetails('inspector Pat, today', { today: TODAY }).date === TODAY)
+}
+
+console.log('\n[22] Suite letter designators work in lowercase dictation')
+{
+  const secs = segmentNarrative('Suite b has worn carpet. Suite c was repainted.')
+  assert('lowercase "suite b"/"suite c" become distinct sections', JSON.stringify(secs.map((s) => s.name)) === JSON.stringify(['Suite B', 'Suite C']), secs.map((s) => s.name).join(','))
+  const article = segmentNarrative('in the suite a leak was found')
+  assert('"the suite a leak" does NOT fold the article into "Suite A"', article.length === 1 && article[0].key === 'suite', article.map((s) => s.key).join(','))
+  assert('and the leak still derives Poor', article[0].condition === 'Poor', article[0].condition)
+}
+
+console.log('\n[23] Exports never silently drop an undecodable photo')
+{
+  const secs = segmentNarrative('the kitchen sink leaks').map((s) => ({
+    ...s, id: `sec_${s.key}`,
+    photos: [
+      { id: 'ok', name: 'good.png', dataUrl: TEST_PNG },
+      { id: 'bad', name: 'bad.jpg', dataUrl: 'data:image/jpeg;base64,AAAA' }
+    ]
+  }))
+  const model = buildExportModel({ ...baseReport, walkthrough: 'the kitchen sink leaks', sections: secs, summary: 'ok' })
+  const pdf = Buffer.from(await pdfToArrayBuffer(model)).toString('latin1')
+  assert('PDF embeds the good photo', pdf.includes('/Subtype /Image'))
+  assert('PDF reports the undecodable photo instead of dropping it', pdf.includes('could not be embedded'))
+  const xml = unzipEntry(await docxToBuffer(model), 'word/document.xml')
+  assert('DOCX embeds the good photo', xml.includes('<w:drawing>'))
+  assert('DOCX reports the undecodable photo', xml.includes('could not be embedded'))
 }
 
 // --- Minimal ZIP entry reader ----------------------------------------------
