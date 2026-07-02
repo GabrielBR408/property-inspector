@@ -360,8 +360,13 @@ export function mergeSections(prev = [], fresh = [], makeId = (k) => `sec_${k}`)
 function apiUrl(path) {
   let base = '/'
   try {
-    const env = import.meta && import.meta.env
-    if (env && typeof env.BASE_URL === 'string') base = env.BASE_URL
+    // Reference the single env key directly. Vite inlines just this string
+    // literal; referencing `import.meta.env` as a whole object would inline the
+    // ENTIRE env (incl. Vercel system vars like VITE_VERCEL_BRANCH_URL) into the
+    // bundle. In Node (self-check) import.meta.env is undefined → this throws and
+    // we fall back to '/'.
+    const b = import.meta.env.BASE_URL
+    if (typeof b === 'string') base = b
   } catch (_e) { /* Node / self-check */ }
   return `${base}${path}`
 }
