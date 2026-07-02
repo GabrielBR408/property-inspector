@@ -5,6 +5,7 @@
 // jsPDF renderer iterates the SAME fragments, so parity is guaranteed.
 
 import { buildExportModel } from './exportModel.js'
+import { dataUrlToBytes, imageSize, fitBox } from './imageMeta.js'
 
 const NAVY = [31, 41, 55]
 const ACCENT = [71, 85, 105]
@@ -41,10 +42,11 @@ export function renderPdfLines(reportOrModel) {
   return lines
 }
 
-// Browser: build and download the PDF. Photos (dataUrls) are embedded when present.
-export async function downloadPdf(report, filename = 'inspection-report.pdf') {
+// Build the actual jsPDF document from the shared model. Works in Node too, so
+// the self-check can verify the REAL PDF bytes (not just the content model).
+async function buildPdfDoc(reportOrModel) {
   const { jsPDF } = await import('jspdf')
-  const model = buildExportModel(report)
+  const model = reportOrModel.sections && reportOrModel.header ? reportOrModel : buildExportModel(reportOrModel)
   const lines = renderPdfLines(model)
   const doc = new jsPDF({ unit: 'pt', format: 'letter' })
   const marginX = 48
@@ -90,23 +92,40 @@ export async function downloadPdf(report, filename = 'inspection-report.pdf') {
       const photos = ln.photos || []
       let px = marginX
       const thumb = 84
+      const capH = 12 // caption line under each photo
       const renderable = photos.filter((p) => p && p.dataUrl)
       if (renderable.length === 0) {
         doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(...MUTED)
         ensure(12); doc.text(ln.text, marginX, y); y += 14
       } else {
-        ensure(thumb + 8)
+        ensure(thumb + capH + 8)
         for (const p of renderable) {
-          if (px + thumb > marginX + maxW) { px = marginX; y += thumb + 8; ensure(thumb + 8) }
+          if (px + thumb > marginX + maxW) { px = marginX; y += thumb + capH + 8; ensure(thumb + capH + 8) }
           try {
             const fmt = p.dataUrl.includes('image/png') ? 'PNG' : 'JPEG'
-            doc.addImage(p.dataUrl, fmt, px, y, thumb, thumb)
+            // Preserve the photo's aspect ratio inside the thumb box.
+            const { width, height } = fitBox(imageSize(dataUrlToBytes(p.dataUrl)), thumb, thumb)
+            doc.addImage(p.dataUrl, fmt, px, y, width, height)
+            doc.setFont('helvetica', 'italic'); doc.setFontSize(7); doc.setTextColor(...MUTED)
+            doc.text(String(p.name || 'photo').slice(0, 22), px, y + thumb + 9)
           } catch (_e) { /* skip unrenderable */ }
           px += thumb + 8
         }
-        y += thumb + 10
+        y += thumb + capH + 10
       }
     }
   }
+  return doc
+}
+
+// Node/self-check: real PDF bytes for verification.
+export async function pdfToArrayBuffer(reportOrModel) {
+  const doc = await buildPdfDoc(reportOrModel)
+  return doc.output('arraybuffer')
+}
+
+// Browser: build and download the PDF. Photos (dataUrls) are embedded when present.
+export async function downloadPdf(report, filename = 'inspection-report.pdf') {
+  const doc = await buildPdfDoc(report)
   doc.save(filename)
 }

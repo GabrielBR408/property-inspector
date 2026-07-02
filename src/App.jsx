@@ -79,7 +79,10 @@ export default function App() {
     detailsTranscript.current = ''
     if (!t) return
     try {
-      const p = await parseDetailsSmart(t, { today: todayISO() })
+      // Pass the on-screen values so the AI enhancer can only fill fields that
+      // are blank everywhere — it can never replace what the user typed.
+      const current = { property: report.property, address: report.address, inspector: report.inspector, date: report.date }
+      const p = await parseDetailsSmart(t, { today: todayISO(), current })
       applyDetails(p)
     } catch (_e) { /* deterministic fill already applied live */ }
   }

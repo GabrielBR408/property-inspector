@@ -140,12 +140,16 @@ export function parseDetails(text, { today } = {}) {
 // --- AI-enhanced parse (fills blanks only) ----------------------------------
 // Runs the deterministic parse, then — if any field is still blank and the
 // endpoint is reachable — asks the serverless parser to fill the gaps. AI values
-// only ever fill BLANK fields; deterministic results always win. Falls back to
-// deterministic on no key / error.
-export async function parseDetailsSmart(text, { today, fetchImpl } = {}) {
+// only ever fill fields that are blank BOTH deterministically and on screen
+// (`current` = the form's present values), so an AI response can never replace
+// something the user typed or the live parse already filled. Deterministic
+// results always win. Falls back to deterministic on no key / error.
+export async function parseDetailsSmart(text, { today, fetchImpl, current } = {}) {
   const base = parseDetails(text, { today })
+  const cur = current || {}
   const doFetch = fetchImpl || (typeof fetch !== 'undefined' ? fetch : null)
-  const complete = base.property && base.address && base.inspector && base.date
+  const have = (f) => base[f] || cur[f]
+  const complete = have('property') && have('address') && have('inspector') && have('date')
   if (!doFetch || !text.trim() || complete) return { ...base, source: 'deterministic' }
 
   try {
@@ -156,12 +160,14 @@ export async function parseDetailsSmart(text, { today, fetchImpl } = {}) {
     })
     if (res && res.ok) {
       const ai = await res.json()
-      const pick = (b, a) => (b ? b : (typeof a === 'string' ? a.trim() : ''))
+      // Deterministic wins; then whatever is already on screen; AI only fills
+      // fields that are blank everywhere else.
+      const pick = (f) => base[f] || cur[f] || (typeof ai[f] === 'string' ? ai[f].trim() : '')
       return {
-        property: pick(base.property, ai.property),
-        address: pick(base.address, ai.address),
-        inspector: pick(base.inspector, ai.inspector),
-        date: pick(base.date, ai.date),
+        property: pick('property'),
+        address: pick('address'),
+        inspector: pick('inspector'),
+        date: pick('date'),
         source: 'ai'
       }
     }

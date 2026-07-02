@@ -56,11 +56,14 @@ const AREA_DEFS = [
   ['Elevator', ['elevator', 'lift', 'escalator']],
   ['Hallway', ['hallway', 'corridor', 'stairwell', 'staircase', 'stairway', 'stairs', 'hall']],
   // Rooms — commercial
+  ['Suite', ['suite', 'tenant suite', 'tenant space']],
   ['Engineer\'s Office', ['engineer\'s office', 'engineers office', 'engineering office', 'engineering room']],
   ['Office', ['office', 'reception', 'reception area', 'front desk', 'cubicle', 'workstation']],
   ['Conference Room', ['conference room', 'meeting room', 'boardroom', 'board room']],
   ['Break Room', ['break room', 'breakroom', 'kitchenette', 'lunch room', 'lunchroom']],
-  ['Restroom', ['restroom', 'rest room', 'washroom', 'men\'s room', 'mens room', 'women\'s room', 'womens room']],
+  ['Men\'s Restroom', ['men\'s restroom', 'mens restroom', 'men\'s room', 'mens room']],
+  ['Women\'s Restroom', ['women\'s restroom', 'womens restroom', 'women\'s room', 'womens room', 'ladies room', 'ladies\' room']],
+  ['Restroom', ['restroom', 'rest room', 'washroom']],
   ['Server Room', ['server room', 'it room', 'data room', 'telecom room', 'idf', 'mdf']],
   ['Janitor Closet', ['janitor closet', 'janitorial', 'custodial closet', 'custodial']],
   ['Storage', ['storage room', 'storeroom', 'storage', 'supply room']],
@@ -134,6 +137,14 @@ const STRONG_STARTERS = new Set([
 
 function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1) }
 
+// Location-REFERENCE prepositions. An area word directly preceded by one of
+// these ("three potholes near the entrance", "a leak above the break room") is
+// a spatial reference inside the current observation, NOT a move to a new area
+// — it must neither split the clause nor spawn a section. Deliberately excludes
+// transition prepositions ("in", "on", "at", "to"): "in the kitchen" still
+// anchors. Checked AFTER modifier folding so "near the east window" is caught.
+const REF_PREP_RE = /\b(?:near|by|beside|behind|above|below|under|underneath|over|toward|towards|next\s+to|close\s+to|across\s+from|adjacent\s+to)\s+(?:the\s+|a\s+|an\s+)?$/i
+
 // All non-overlapping area anchors in `text`, in order, with position modifiers
 // captured. Each anchor: { start, end, area, key, name }.
 function findAllAreas(text, aliases) {
@@ -153,6 +164,16 @@ function findAllAreas(text, aliases) {
     if (f.start >= lastEnd) { anchors.push(f); lastEnd = f.end }
   }
   for (const a of anchors) {
+    // Fold a trailing unit designator into a Suite anchor, so "suite 210" and
+    // "suite 200" become DISTINCT sections named "Suite 210" / "Suite 200".
+    if (a.key === 'suite') {
+      const after = text.slice(a.end).match(/^\s+(\d{1,5}[A-Za-z]?|[A-Z])\b/)
+      if (after) {
+        a.end += after[0].length
+        a.area = `Suite ${after[1].toUpperCase()}`
+        a.key = slugify(a.area)
+      }
+    }
     const before = text.slice(0, a.start)
     const mm = before.match(/([A-Za-z0-9]+)(\s+)$/)
     if (mm && MODIFIERS.has(mm[1].toLowerCase())) {
@@ -162,7 +183,8 @@ function findAllAreas(text, aliases) {
     }
     a.name = a.area
   }
-  return anchors
+  // Drop anchors that are location references, not area transitions.
+  return anchors.filter((a) => !REF_PREP_RE.test(text.slice(0, a.start)))
 }
 
 // The first area anchor in a piece of text, or null.
@@ -237,11 +259,11 @@ const COND_KEYWORDS = {
     'hazard', 'hazardous', 'unsafe', 'water damage', 'rust', 'rusted', 'rusting', 'corroded', 'corrosion', 'clogged',
     'inoperable', 'not working', 'does not work', "doesn't work", 'sagging', 'termite', 'loose', 'jammed', 'seized',
     'stuck', 'warped', 'warping', 'bent', 'torn', 'frayed', 'hole', 'holes', 'spalling', 'efflorescence',
-    'blistered', 'blistering', 'settling'],
+    'blistered', 'blistering', 'settling', 'pothole', 'potholes'],
   Fair: ['fair', 'aging', 'aged', 'minor', 'wear', 'dated', 'outdated', 'moderate', 'scuff', 'scuffed', 'cosmetic',
     'older', 'weathered', 'peeling', 'faded', 'discolored', 'discoloration', 'stained', 'staining', 'stain',
     'loud', 'noisy', 'dented', 'dent', 'dents', 'chipped', 'chip', 'chips', 'chipping', 'scratched', 'scratches',
-    'scratch', 'dingy', 'dirty', 'grimy', 'dull', 'sticking', 'sticks'],
+    'scratch', 'dingy', 'dirty', 'grimy', 'dull', 'sticking', 'sticks', 'fading', 'ponding'],
   Good: ['good', 'excellent', 'brand new', 'recently replaced', 'recently updated', 'recently renovated', 'updated',
     'renovated', 'great', 'well maintained', 'well-maintained', 'no issues', 'no visible', 'clean', 'functional',
     'works well', 'like new', 'pristine', 'solid', 'new']

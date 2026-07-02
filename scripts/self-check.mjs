@@ -13,8 +13,9 @@ import {
 } from '../src/lib/segment.js'
 import { parseDetails, parseDetailsSmart } from '../src/lib/details.js'
 import { buildExportModel, exportSectionKeys } from '../src/lib/exportModel.js'
-import { renderPdfLines } from '../src/lib/exportPdf.js'
+import { renderPdfLines, pdfToArrayBuffer } from '../src/lib/exportPdf.js'
 import { docxToBuffer } from '../src/lib/exportDocx.js'
+import { dataUrlToBytes, imageSize, fitBox } from '../src/lib/imageMeta.js'
 
 let passed = 0
 const failures = []
@@ -290,6 +291,103 @@ console.log('\n[14] Dictated Report Details parse into fields (deterministic + A
   assert('AI source flagged', smart.source === 'ai', smart.source)
   const noNet = await parseDetailsSmart('property is Elm Center', { today: TODAY, fetchImpl: async () => ({ ok: false }) })
   assert('no-AI fallback keeps deterministic result', noNet.property === 'Elm Center' && noNet.source === 'deterministic', JSON.stringify(noNet))
+}
+
+console.log('\n[15] Commercial walkthrough vocabulary: numbered suites, distinct restrooms, location references')
+{
+  // Numbered tenant suites become DISTINCT sections; a mid-stream correction
+  // ("...the leak is in suite 210 not 200") attributes to the corrected suite;
+  // "above the break room" is a location reference, not a Break Room section.
+  const NARR = 'Suite 200 is vacant and the carpet is worn. There is a leak in suite 200 above the break room. ' +
+    'Actually scratch that, the leak is in suite 210 not 200. Suite 210 was recently repainted.'
+  const secs = segmentNarrative(NARR)
+  const keys = secs.map((s) => s.key)
+  assert('suite 200 and suite 210 are distinct sections', JSON.stringify(keys) === JSON.stringify(['suite200', 'suite210']), keys.join(','))
+  const byKey = Object.fromEntries(secs.map((s) => [s.key, s]))
+  assert('suite names carry the number', byKey.suite200.name === 'Suite 200' && byKey.suite210.name === 'Suite 210', `${byKey.suite200 && byKey.suite200.name}|${byKey.suite210 && byKey.suite210.name}`)
+  assert('correction sentence lands in Suite 210 (not 200, not a phantom area)', /scratch that/.test(byKey.suite210.text) && !/scratch that/.test(byKey.suite200.text))
+  assert('"above the break room" did NOT spawn a Break Room section', !keys.includes('breakroom'))
+  assert('every suite slice is faithful', secs.every((s) => faithful(NARR, s.text)))
+  assert('a directly-addressed break room still anchors', segmentNarrative('The break room fridge is leaking.')[0].key === 'breakroom')
+  assert('"primary suite" still maps to Primary Bedroom', segmentNarrative('The primary suite carpet is worn.')[0].key === 'primarybedroom')
+
+  // Men's vs women's restrooms are distinct sections with their own ratings.
+  const rr = segmentNarrative("The men's restroom is clean, no issues. The women's restroom has a cracked sink.")
+  assert('restrooms split by gender', JSON.stringify(rr.map((s) => s.key)) === JSON.stringify(['mensrestroom', 'womensrestroom']), rr.map((s) => s.key).join(','))
+  assert("men's restroom rated from its own text (Good)", rr[0].condition === 'Good', rr[0].condition)
+  assert("women's restroom rated from its own text (Poor)", rr[1].condition === 'Poor', rr[1].condition)
+  assert('a plain "restroom" still anchors generically', segmentNarrative('The restroom tile is chipped.')[0].key === 'restroom')
+
+  // Location references must not split a clause or spawn a section.
+  const park = segmentNarrative('Out in the parking lot, the striping is fading and there are three potholes near the entrance.')
+  assert('"near the entrance" stays inside the Parking section', park.length === 1 && park[0].key === 'parking', park.map((s) => s.key).join(','))
+  assert('potholes derive Poor', park[0].condition === 'Poor', park[0].condition)
+  const lob = segmentNarrative('In the lobby, three ceiling tiles are stained near the east window.')
+  assert('"near the east window" does not spawn a Windows section', lob.length === 1 && lob[0].key === 'lobby', lob.map((s) => s.key).join(','))
+  assert('a real transition still anchors ("In the kitchen...")', segmentNarrative('The lobby is clean. In the kitchen the sink drips.').map((s) => s.key).join(',') === 'lobby,kitchen')
+  assert('"fading" derives Fair', deriveCondition('the striping is fading') === 'Fair', deriveCondition('the striping is fading'))
+}
+
+console.log('\n[16] Details AI enhancer cannot overwrite what is already on screen')
+{
+  const TODAY = '2026-07-01'
+  const evilFetch = async () => ({ ok: true, json: async () => ({ property: 'FAKE HALL', address: '999 Ghost Rd', inspector: 'Nobody', date: '1900-01-01' }) })
+  const smart = await parseDetailsSmart('inspector Dana Fox', { today: TODAY, fetchImpl: evilFetch, current: { property: 'Typed Tower', date: '2026-06-30' } })
+  assert('AI did NOT replace the typed property', smart.property === 'Typed Tower', smart.property)
+  assert('AI did NOT replace the on-screen date', smart.date === '2026-06-30', smart.date)
+  assert('deterministic inspector still wins', smart.inspector === 'Dana Fox', smart.inspector)
+  assert('AI fills a field blank everywhere (address)', smart.address === '999 Ghost Rd', smart.address)
+  const full = await parseDetailsSmart('inspector Dana Fox', {
+    today: TODAY, fetchImpl: evilFetch,
+    current: { property: 'P', address: 'A', inspector: '', date: '2026-06-30' }
+  })
+  assert('nothing blank anywhere -> AI not needed, deterministic source', full.source === 'deterministic', full.source)
+}
+
+// A real 1x1 PNG for photo-embedding tests (valid, minimal).
+const TEST_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+
+console.log('\n[17] DOCX embeds photos with captions (owner-facing document carries the images)')
+{
+  const secs = segmentNarrative(NARRATIVE).map((s) => ({
+    ...s, id: `sec_${s.key}`,
+    photos: s.key === 'kitchen' ? [{ id: 'p1', name: 'kitchen-sink.png', dataUrl: TEST_PNG }] : []
+  }))
+  const report = { ...baseReport, sections: secs, summary: 'ok' }
+  const buf = await docxToBuffer(buildExportModel(report))
+  const xml = unzipEntry(buf, 'word/document.xml')
+  assert('docx has a drawing element for the photo', xml.includes('<w:drawing>'))
+  assert('docx has the photo caption (section + filename)', xml.includes('Kitchen — kitchen-sink.png'))
+  const raw = buf.toString('latin1')
+  assert('docx contains the actual image bytes (word/media/*.png)', raw.includes('word/media/') && raw.includes('.png'))
+  assert('no fallback "could not be embedded" note for a good photo', !xml.includes('could not be embedded'))
+  // imageMeta helpers behave.
+  const size = imageSize(dataUrlToBytes(TEST_PNG))
+  assert('imageSize reads PNG dimensions', size && size.width === 1 && size.height === 1, JSON.stringify(size))
+  const fit = fitBox({ width: 400, height: 300 }, 280, 210)
+  assert('fitBox preserves aspect ratio', fit.width === 280 && fit.height === 210, JSON.stringify(fit))
+  const fit2 = fitBox(null, 84, 84)
+  assert('fitBox falls back to a square for unknown size', fit2.width === 84 && fit2.height === 84, JSON.stringify(fit2))
+}
+
+console.log('\n[18] Real PDF bytes: every section, details, photo + caption (headless)')
+{
+  const secs = segmentNarrative(NARRATIVE).map((s) => ({
+    ...s, id: `sec_${s.key}`,
+    photos: s.key === 'kitchen' ? [{ id: 'p1', name: 'kitchen-sink.png', dataUrl: TEST_PNG }] : []
+  }))
+  const report = { ...baseReport, sections: secs, summary: deterministicSummary(baseReport, secs) }
+  const pdf = Buffer.from(await pdfToArrayBuffer(buildExportModel(report)))
+  const s = pdf.toString('latin1')
+  assert('pdf output is a real PDF', s.startsWith('%PDF-'), s.slice(0, 8))
+  for (const name of ['Roof', 'Kitchen', 'Primary Bathroom', 'Basement', 'Living Room']) {
+    assert(`pdf bytes contain section "${name}"`, s.includes(name))
+  }
+  assert('pdf bytes contain a narrated observation (faucet)', s.includes('faucet'))
+  assert('pdf embeds the photo as an image object', s.includes('/Subtype /Image'))
+  assert('pdf carries the photo caption', s.includes('kitchen-sink.png'))
+  assert('pdf has no "undefined" text', !s.includes('undefined'))
 }
 
 // --- Minimal ZIP entry reader ----------------------------------------------

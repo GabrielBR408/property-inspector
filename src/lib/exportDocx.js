@@ -4,9 +4,10 @@
 // verify every section is present. The browser download helper is separate.
 
 import {
-  Document, Packer, Paragraph, TextRun, HeadingLevel
+  Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun
 } from 'docx'
 import { buildExportModel } from './exportModel.js'
+import { dataUrlParts, dataUrlToBytes, imageSize, fitBox } from './imageMeta.js'
 
 const NAVY = '1F2937'
 const ACCENT = '475569'
@@ -71,9 +72,33 @@ export function buildDocxDocument(reportOrModel) {
       children: [new TextRun({ text: section.text || '—' })]
     }))
     if (section.photoCount > 0) {
-      children.push(new Paragraph({
-        children: [new TextRun({ text: `${section.photoCount} photo(s) attached`, italics: true, color: MUTED, size: 18 })]
-      }))
+      // Embed each photo (with a caption) so the owner-facing document carries
+      // the images themselves, not just a count. Unembeddable photos fall back
+      // to the count line so nothing is silently lost.
+      let embedded = 0
+      for (const p of section.photos || []) {
+        try {
+          const parts = dataUrlParts(p && p.dataUrl)
+          const bytes = dataUrlToBytes(p && p.dataUrl)
+          if (!parts || !bytes) continue
+          const type = parts.mime.includes('png') ? 'png' : 'jpg'
+          const { width, height } = fitBox(imageSize(bytes), 280, 210)
+          children.push(new Paragraph({
+            spacing: { before: 80 },
+            children: [new ImageRun({ type, data: bytes, transformation: { width, height } })]
+          }))
+          children.push(new Paragraph({
+            spacing: { after: 80 },
+            children: [new TextRun({ text: `${section.name} — ${p.name || 'photo'}`, italics: true, color: MUTED, size: 16 })]
+          }))
+          embedded += 1
+        } catch (_e) { /* skip unrenderable photo; counted below */ }
+      }
+      if (embedded < section.photoCount) {
+        children.push(new Paragraph({
+          children: [new TextRun({ text: `${section.photoCount - embedded} photo(s) attached (could not be embedded)`, italics: true, color: MUTED, size: 18 })]
+        }))
+      }
     }
   }
 
