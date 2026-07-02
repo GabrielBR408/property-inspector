@@ -16,14 +16,18 @@ export function isVoiceSupported() {
   return typeof window !== 'undefined' && !!(window.SpeechRecognition || window.webkitSpeechRecognition)
 }
 
-// onFinal(text) is called with each finalized chunk of transcript. The hook
-// exposes { listening, interim, start, stop, supported }.
-export function useVoice(onFinal) {
+// onFinal(text) is called with each finalized chunk of transcript. Optional
+// onEnd() fires once when recognition stops (user toggle or natural end) — used
+// to trigger a one-shot AI enhancement pass. The hook exposes
+// { listening, interim, start, stop, supported }.
+export function useVoice(onFinal, onEnd) {
   const [listening, setListening] = useState(false)
   const [interim, setInterim] = useState('')
   const recRef = useRef(null)
   const onFinalRef = useRef(onFinal)
   onFinalRef.current = onFinal
+  const onEndRef = useRef(onEnd)
+  onEndRef.current = onEnd
 
   const stop = useCallback(() => {
     const rec = recRef.current
@@ -53,7 +57,7 @@ export function useVoice(onFinal) {
       setInterim(interimText)
     }
     rec.onerror = () => { setListening(false); setInterim(''); track('inspector', 'error', { reason: 'dictation_error' }) }
-    rec.onend = () => { setListening(false); setInterim('') }
+    rec.onend = () => { setListening(false); setInterim(''); if (onEndRef.current) onEndRef.current() }
     recRef.current = rec
     try { rec.start(); setListening(true); track('inspector', 'dictation_started') } catch (_e) { setListening(false); track('inspector', 'error', { reason: 'dictation_start_failed' }) }
   }, [stop])

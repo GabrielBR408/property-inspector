@@ -1,11 +1,12 @@
 import React from 'react'
 import { useVoice } from '../lib/useVoice.js'
 
-// A mic toggle that streams finalized speech chunks to onText(chunk). Renders
-// nothing (returns a disabled hint) when speech recognition is unsupported —
-// the parent always keeps a textarea so manual entry still works.
-export default function VoiceButton({ onText, label = 'Dictate', compact = false }) {
-  const { listening, interim, start, stop, supported } = useVoice(onText)
+// A mic toggle that streams finalized speech chunks to onText(chunk). Optional
+// onStop() fires when recognition ends. Renders a disabled hint when speech
+// recognition is unsupported — the parent always keeps a textarea so manual
+// entry still works.
+export default function VoiceButton({ onText, onStop, label = 'Dictate', compact = false }) {
+  const { listening, interim, start, stop, supported } = useVoice(onText, onStop)
 
   if (!supported) {
     return <span className="voice-unsupported" title="Voice not supported in this browser — type instead">🎤 n/a</span>

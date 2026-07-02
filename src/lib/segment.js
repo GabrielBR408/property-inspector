@@ -357,7 +357,7 @@ export function mergeSections(prev = [], fresh = [], makeId = (k) => `sec_${k}`)
 // built with a Vite `base` prefix, so import.meta.env.BASE_URL carries that
 // prefix and the fetch routes correctly through a hub proxy. In Node (self-check)
 // import.meta.env is undefined → falls back to '/'.
-function apiUrl(path) {
+export function apiUrl(path) {
   let base = '/'
   try {
     // Reference the single env key directly. Vite inlines just this string

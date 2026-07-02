@@ -11,6 +11,7 @@ import {
   segmentNarrative, splitSentences, deriveCondition, analyzeNarrative,
   tallyConditions, deterministicSummary, lastMentionedKey
 } from '../src/lib/segment.js'
+import { parseDetails, parseDetailsSmart } from '../src/lib/details.js'
 import { buildExportModel, exportSectionKeys } from '../src/lib/exportModel.js'
 import { renderPdfLines } from '../src/lib/exportPdf.js'
 import { docxToBuffer } from '../src/lib/exportDocx.js'
@@ -250,6 +251,45 @@ console.log('\n[13] Unfiled photo attributes to the area currently being discuss
   assert('sections are [kitchen, bathroom] in first-mention order', JSON.stringify(secs.map((s) => s.key)) === JSON.stringify(['kitchen', 'bathroom']), secs.map((s) => s.key).join(','))
   assert('last-mentioned area is kitchen (not the last array element bathroom)', lastMentionedKey(NARR) === 'kitchen', String(lastMentionedKey(NARR)))
   assert('empty narrative -> null (falls back to General)', lastMentionedKey('') === null, String(lastMentionedKey('')))
+}
+
+console.log('\n[14] Dictated Report Details parse into fields (deterministic + AI enhancer)')
+{
+  const TODAY = '2026-07-01'
+  // Fully-cued utterance with an uncued address clause and a relative date.
+  const a = parseDetails('Property is Maple Court Apartments, 123 Main St Unit 4, inspector Jane Doe, today', { today: TODAY })
+  assert('property parsed', a.property === 'Maple Court Apartments', a.property)
+  assert('uncued address split out (not merged into property)', a.address === '123 Main St Unit 4', a.address)
+  assert('inspector parsed', a.inspector === 'Jane Doe', a.inspector)
+  assert('relative date "today" resolved', a.date === TODAY, a.date)
+
+  // "inspected by" + "located at" + explicit month date.
+  const b = parseDetails('building North Tower located at 500 Oak Avenue inspected by Sam Lee date March 5 2026', { today: TODAY })
+  assert('building->property', b.property === 'North Tower', b.property)
+  assert('located at->address', b.address === '500 Oak Avenue', b.address)
+  assert('inspected by->inspector', b.inspector === 'Sam Lee', b.inspector)
+  assert('month-name date -> ISO', b.date === '2026-03-05', b.date)
+
+  // Numeric date + tomorrow math + property name that contains a street-suffix word.
+  assert('M/D/Y date parsed', parseDetails('date 7/4/2026', { today: TODAY }).date === '2026-07-04')
+  assert('tomorrow resolved', parseDetails('inspector Pat, tomorrow', { today: TODAY }).date === '2026-07-02')
+  const c = parseDetails('property is Courtyard Plaza, inspector Alex Kim', { today: TODAY })
+  assert('property with "Court" is NOT mis-parsed as address', c.property === 'Courtyard Plaza' && c.address === '', `${c.property}|${c.address}`)
+
+  // Missing fields stay blank — nothing fabricated.
+  const d = parseDetails('inspector Jordan Vega', { today: TODAY })
+  assert('unspoken fields stay blank', d.property === '' && d.address === '' && d.date === '' && d.inspector === 'Jordan Vega', JSON.stringify(d))
+  assert('empty input -> all blank', JSON.stringify(parseDetails('', { today: TODAY })) === JSON.stringify({ property: '', address: '', inspector: '', date: '' }))
+
+  // AI enhancer fills ONLY blanks; deterministic results always win; blanks the
+  // model can't fill stay blank.
+  const evilFetch = async () => ({ ok: true, json: async () => ({ property: 'FAKE HALL', address: '999 Ghost Rd', inspector: 'Nobody', date: '1900-01-01' }) })
+  const smart = await parseDetailsSmart('inspector Dana Fox', { today: TODAY, fetchImpl: evilFetch })
+  assert('AI did NOT overwrite deterministically-parsed inspector', smart.inspector === 'Dana Fox', smart.inspector)
+  assert('AI filled a blank field (address)', smart.address === '999 Ghost Rd', smart.address)
+  assert('AI source flagged', smart.source === 'ai', smart.source)
+  const noNet = await parseDetailsSmart('property is Elm Center', { today: TODAY, fetchImpl: async () => ({ ok: false }) })
+  assert('no-AI fallback keeps deterministic result', noNet.property === 'Elm Center' && noNet.source === 'deterministic', JSON.stringify(noNet))
 }
 
 // --- Minimal ZIP entry reader ----------------------------------------------

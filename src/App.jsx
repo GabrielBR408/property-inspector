@@ -8,6 +8,7 @@ import { downloadPdf } from './lib/exportPdf.js'
 import { downloadDocx } from './lib/exportDocx.js'
 import { saveReport, loadReport, clearReport } from './lib/db.js'
 import { registerPWA } from './pwa/registerUpdate.js'
+import { parseDetails, parseDetailsSmart } from './lib/details.js'
 import { track } from './lib/track.js'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
@@ -56,6 +57,32 @@ export default function App() {
   }, [report])
 
   const setHeader = (patch) => setReport((r) => ({ ...r, ...patch }))
+
+  // --- Dictate the top "Report Details" fields --------------------------------
+  // Fill only the fields actually spoken; never clobber an existing value with a
+  // blank, and everything stays editable. Deterministic parse runs live on each
+  // chunk; an optional AI pass fills any remaining blanks when dictation stops.
+  const detailsTranscript = useRef('')
+  const applyDetails = (p) => setReport((r) => ({
+    ...r,
+    property: p.property || r.property,
+    address: p.address || r.address,
+    inspector: p.inspector || r.inspector,
+    date: p.date || r.date
+  }))
+  const onDetailsChunk = (chunk) => {
+    detailsTranscript.current = `${detailsTranscript.current} ${chunk}`.trim()
+    applyDetails(parseDetails(detailsTranscript.current, { today: todayISO() }))
+  }
+  const onDetailsStop = async () => {
+    const t = detailsTranscript.current
+    detailsTranscript.current = ''
+    if (!t) return
+    try {
+      const p = await parseDetailsSmart(t, { today: todayISO() })
+      applyDetails(p)
+    } catch (_e) { /* deterministic fill already applied live */ }
+  }
 
   // Walkthrough edits drive the section list.
   const setWalkthrough = (text) =>
@@ -161,6 +188,10 @@ export default function App() {
         <div className="step-head">
           <span className="step-eyebrow">Report details</span>
           <h2 className="step-title">Property &amp; inspector</h2>
+          <p className="step-note">Type below, or dictate — e.g. “Property is Maple Court Apartments, 123 Main St Unit 4, inspector Jane Doe, today.” Only what you say fills in.</p>
+        </div>
+        <div className="walkthrough-tools">
+          <VoiceButton onText={onDetailsChunk} onStop={onDetailsStop} label="Dictate details" />
         </div>
         <div className="header-grid">
           <label className="hg"><span>Property</span>
