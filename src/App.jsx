@@ -33,7 +33,7 @@ export default function App() {
   const lastSectionCount = useRef(0)
 
   useEffect(() => {
-    track('inspector', 'app_opened')
+    track('app_opened')
     loadReport().then((saved) => {
       if (saved && saved.sections) setReport(saved)
       loaded.current = true
@@ -46,7 +46,7 @@ export default function App() {
   useEffect(() => {
     if (report.sections.length !== lastSectionCount.current) {
       lastSectionCount.current = report.sections.length
-      track('inspector', 'sections_detected', { count: report.sections.length })
+      track('sections_detected', { count: report.sections.length })
     }
   }, [report.sections.length])
 
@@ -138,10 +138,10 @@ export default function App() {
       setDraftMsg(source === 'ai'
         ? 'Drafted with AI — sections and summary generated. Everything below is editable.'
         : 'Drafted offline (deterministic) — sections and summary generated. Everything below is editable.')
-      track('inspector', 'draft_generated', { source: source === 'ai' ? 'ai' : 'deterministic' })
+      track('draft_generated', { source: source === 'ai' ? 'ai' : 'deterministic' })
     } catch (_e) {
       setDraftMsg('Could not draft — please try again.')
-      track('inspector', 'error', { reason: 'draft_failed' })
+      track('error', { reason: 'draft_failed' })
     } finally { setDrafting(false) }
   }
 
@@ -151,10 +151,10 @@ export default function App() {
       const base = (report.property || report.address || 'inspection').replace(/[^\w.-]+/g, '_').slice(0, 40)
       if (kind === 'pdf') await downloadPdf(report, `${base}.pdf`)
       else await downloadDocx(report, `${base}.docx`)
-      track('inspector', kind === 'pdf' ? 'export_pdf' : 'export_docx')
+      track(kind === 'pdf' ? 'export_pdf' : 'export_docx')
     } catch (e) {
       setDraftMsg(`Export failed: ${String(e && e.message ? e.message : e)}`)
-      track('inspector', 'error', { reason: 'export_failed' })
+      track('error', { reason: 'export_failed' })
     } finally { setExporting('') }
   }
 

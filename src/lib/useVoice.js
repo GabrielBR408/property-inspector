@@ -56,10 +56,10 @@ export function useVoice(onFinal, onEnd) {
       }
       setInterim(interimText)
     }
-    rec.onerror = () => { setListening(false); setInterim(''); track('inspector', 'error', { reason: 'dictation_error' }) }
+    rec.onerror = () => { setListening(false); setInterim(''); track('error', { reason: 'dictation_error' }) }
     rec.onend = () => { setListening(false); setInterim(''); if (onEndRef.current) onEndRef.current() }
     recRef.current = rec
-    try { rec.start(); setListening(true); track('inspector', 'dictation_started') } catch (_e) { setListening(false); track('inspector', 'error', { reason: 'dictation_start_failed' }) }
+    try { rec.start(); setListening(true); track('dictation_started') } catch (_e) { setListening(false); track('error', { reason: 'dictation_start_failed' }) }
   }, [stop])
 
   useEffect(() => () => stop(), [stop])

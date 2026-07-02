@@ -1,6 +1,12 @@
 // Lightweight, privacy-friendly analytics — fire-and-forget, never blocks the UI,
 // never throws. `properties` must only ever be counts/booleans/reason strings —
 // never dictated narrative text, photos, or any drafted report content.
+//
+// APP_TAG identifies this build in the shared analytics dashboard. It is an
+// identity/config value (like DB_NAME / the session-id key) — the branded and
+// white-label builds set it differently so their events show separately; all
+// call sites stay identical (`track(event, props)`).
+const APP_TAG = 'property-inspector'
 const SUPABASE_URL = 'https://dsmbppzvembacitwdrsj.supabase.co'
 const SUPABASE_KEY = 'sb_publishable_jqiREpSEu8ItzSEcjTypsQ_41EivRsM'
 
@@ -19,10 +25,10 @@ function getSessionId() {
   }
 }
 
-export function track(app, event, properties = {}) {
+export function track(event, properties = {}) {
   try {
     const body = JSON.stringify({
-      app,
+      app: APP_TAG,
       event,
       session_id: getSessionId(),
       properties,
