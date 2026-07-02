@@ -6,12 +6,12 @@ const SUPABASE_KEY = 'sb_publishable_jqiREpSEu8ItzSEcjTypsQ_41EivRsM'
 
 function getSessionId() {
   try {
-    let id = localStorage.getItem('chiefeo_session_id')
+    let id = localStorage.getItem('inspector_session_id')
     if (!id) {
       id = (typeof crypto !== 'undefined' && crypto.randomUUID)
         ? crypto.randomUUID()
         : Math.random().toString(36).slice(2) + Date.now().toString(36)
-      localStorage.setItem('chiefeo_session_id', id)
+      localStorage.setItem('inspector_session_id', id)
     }
     return id
   } catch {

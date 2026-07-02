@@ -3,7 +3,7 @@ import SectionCard from './components/SectionCard.jsx'
 import VoiceButton from './components/VoiceButton.jsx'
 import { newReport } from './lib/schema.js'
 import { fileToPhoto } from './lib/db.js'
-import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions } from './lib/segment.js'
+import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey } from './lib/segment.js'
 import { downloadPdf } from './lib/exportPdf.js'
 import { downloadDocx } from './lib/exportDocx.js'
 import { saveReport, loadReport, clearReport } from './lib/db.js'
@@ -82,13 +82,19 @@ export default function App() {
     if (!photos.length) return
     setReport((r) => {
       const sections = [...r.sections]
-      let target = sections[sections.length - 1]
-      if (!target) {
-        target = { id: sectionId('general'), key: 'general', area: 'General Observations', name: 'General Observations', text: '', condition: 'N/A', photos: [], textEdited: false, conditionEdited: false, nameEdited: false }
-        sections.push(target)
+      // Attribute to the area currently being discussed (last one mentioned in the
+      // walkthrough), NOT whichever section is last in first-mention order.
+      const key = lastMentionedKey(r.walkthrough || '', r.aiAreas || [])
+      let idx = key ? sections.findIndex((s) => s.key === key) : -1
+      if (idx < 0) {
+        // No current area → a General bucket (reuse if one already exists).
+        idx = sections.findIndex((s) => s.key === 'general')
+        if (idx < 0) {
+          sections.push({ id: sectionId('general'), key: 'general', area: 'General Observations', name: 'General Observations', text: '', condition: 'N/A', photos: [], textEdited: false, conditionEdited: false, nameEdited: false })
+          idx = sections.length - 1
+        }
       }
-      const idx = sections.indexOf(target)
-      sections[idx] = { ...target, photos: [...(target.photos || []), ...photos] }
+      sections[idx] = { ...sections[idx], photos: [...(sections[idx].photos || []), ...photos] }
       return { ...r, sections }
     })
   }
@@ -208,7 +214,7 @@ export default function App() {
         )}
 
         <div className="unfiled-photo">
-          <button type="button" className="mini-btn" onClick={() => unfiledRef.current?.click()}>🖼 Add photo (to latest / general)</button>
+          <button type="button" className="mini-btn" onClick={() => unfiledRef.current?.click()}>🖼 Add photo (to current area)</button>
           <input ref={unfiledRef} type="file" accept="image/*" multiple hidden
             onChange={(e) => { addUnfiledPhoto(e.target.files); e.target.value = '' }} />
         </div>

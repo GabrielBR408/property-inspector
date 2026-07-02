@@ -218,25 +218,59 @@ export function splitSentences(text) {
 }
 
 // --- Condition derivation ---------------------------------------------------
+// EXPLICIT self-rating phrases: when the inspector states the condition directly
+// ("is fair", "in good condition", "excellent"), that wins over an incidental
+// defect noun elsewhere in the sentence ("...but there's some cracking"). Ordered
+// worst-first so a stated bad rating still dominates a stated good one.
+const EXPLICIT_RE = [
+  ['Poor', /\b(in poor condition|poor condition|is (?:in )?poor|in bad condition|bad condition|is bad|is damaged|is broken|non[- ]?functional|not functional)\b/],
+  ['Fair', /\b(in fair condition|fair condition|is (?:in )?fair|adequate|serviceable|passable)\b/],
+  ['Good', /\b(in (?:good|great|excellent) condition|(?:good|great|excellent) condition|is (?:in )?(?:good|great|excellent)|in good shape|good shape|excellent|pristine|like new|well[- ]maintained|no issues|works well|fully functional)\b/]
+]
+
+// Incidental keyword scan (fallback), matched with WORD BOUNDARIES so "dated"
+// does not fire inside "updated"/"outdated". Scanned worst-severity first.
 const COND_KEYWORDS = {
-  Poor: ['poor', 'damaged', 'broken', 'leak', 'leaking', 'leaked', 'crack', 'cracked', 'cracking',
-    'worn', 'deteriorat', 'needs repair', 'needs replacement', 'needs replacing', 'failing', 'failed',
-    'rot', 'rotted', 'rotting', 'mold', 'mildew', 'soft spot', 'curling', 'missing', 'hazard', 'unsafe',
-    'water damage', 'rust', 'rusted', 'rusting', 'clogged', 'inoperable', 'not working', 'does not work',
-    "doesn't work", 'sagging', 'termite', 'corroded'],
-  Fair: ['fair', 'aging', 'aged', 'minor', 'wear', 'dated', 'outdated', 'moderate', 'scuff', 'scuffed',
-    'cosmetic', 'older', 'weathered', 'peeling', 'faded'],
-  Good: ['good', 'excellent', 'brand new', 'recently replaced', 'recently updated', 'recently renovated',
-    'updated', 'renovated', 'great', 'well maintained', 'well-maintained', 'no issues', 'no visible',
-    'clean', 'functional', 'works well', 'like new', 'pristine', 'solid', 'new ']
+  Poor: ['poor', 'damaged', 'broken', 'leak', 'leaking', 'leaked', 'leaks', 'crack', 'cracked', 'cracking', 'cracks',
+    'worn', 'deteriorated', 'deteriorating', 'deterioration', 'needs repair', 'needs replacement', 'needs replacing',
+    'failing', 'failed', 'rot', 'rotted', 'rotting', 'rotten', 'mold', 'mildew', 'soft spot', 'curling', 'missing',
+    'hazard', 'hazardous', 'unsafe', 'water damage', 'rust', 'rusted', 'rusting', 'corroded', 'corrosion', 'clogged',
+    'inoperable', 'not working', 'does not work', "doesn't work", 'sagging', 'termite', 'loose', 'jammed', 'seized',
+    'stuck', 'warped', 'warping', 'bent', 'torn', 'frayed', 'hole', 'holes', 'spalling', 'efflorescence',
+    'blistered', 'blistering', 'settling'],
+  Fair: ['fair', 'aging', 'aged', 'minor', 'wear', 'dated', 'outdated', 'moderate', 'scuff', 'scuffed', 'cosmetic',
+    'older', 'weathered', 'peeling', 'faded', 'discolored', 'discoloration', 'stained', 'staining', 'stain',
+    'loud', 'noisy', 'dented', 'dent', 'dents', 'chipped', 'chip', 'chips', 'chipping', 'scratched', 'scratches',
+    'scratch', 'dingy', 'dirty', 'grimy', 'dull', 'sticking', 'sticks'],
+  Good: ['good', 'excellent', 'brand new', 'recently replaced', 'recently updated', 'recently renovated', 'updated',
+    'renovated', 'great', 'well maintained', 'well-maintained', 'no issues', 'no visible', 'clean', 'functional',
+    'works well', 'like new', 'pristine', 'solid', 'new']
+}
+
+const _wordReCache = new Map()
+function wordRe(k) {
+  let re = _wordReCache.get(k)
+  if (!re) { re = new RegExp(`\\b${escapeRegExp(k)}\\b`); _wordReCache.set(k, re) }
+  return re
 }
 
 export function deriveCondition(text) {
   const lc = ` ${String(text || '').toLowerCase()} `
+  // 1. Explicit self-rating wins over incidental defect words.
+  for (const [level, re] of EXPLICIT_RE) { if (re.test(lc)) return level }
+  // 2. Fallback: incidental keywords (word-boundary), worst severity first.
   for (const level of ['Poor', 'Fair', 'Good']) {
-    if (COND_KEYWORDS[level].some((k) => lc.includes(k))) return level
+    if (COND_KEYWORDS[level].some((k) => wordRe(k).test(lc))) return level
   }
   return 'N/A'
+}
+
+// Key of the LAST area mentioned in the text (by position), or null. Used to
+// attribute an unfiled photo to the area currently being discussed, rather than
+// to whichever section happens to be last in first-mention order.
+export function lastMentionedKey(text, extraLabels = []) {
+  const anchors = findAllAreas(String(text || ''), buildAliases(extraLabels))
+  return anchors.length ? anchors[anchors.length - 1].key : null
 }
 
 // --- Core segmentation ------------------------------------------------------

@@ -9,7 +9,7 @@ import zlib from 'node:zlib'
 import { CONDITIONS } from '../src/lib/schema.js'
 import {
   segmentNarrative, splitSentences, deriveCondition, analyzeNarrative,
-  tallyConditions, deterministicSummary
+  tallyConditions, deterministicSummary, lastMentionedKey
 } from '../src/lib/segment.js'
 import { buildExportModel, exportSectionKeys } from '../src/lib/exportModel.js'
 import { renderPdfLines } from '../src/lib/exportPdf.js'
@@ -220,6 +220,36 @@ console.log('\n[11] AI-proposed labels feed LIVE (extra vocabulary) segmentation
   const withLabels = segmentNarrative(NARR, ['mudroom', 'solarium'])
   assert('with AI labels, mudroom + solarium become sections', JSON.stringify(withLabels.map((s) => s.key)) === JSON.stringify(['kitchen', 'mudroom', 'solarium']), withLabels.map((s) => s.key).join(','))
   assert('label-derived slices stay faithful', withLabels.every((s) => faithful(NARR, s.text)))
+}
+
+console.log('\n[12] deriveCondition: explicit self-rating wins, word boundaries, expanded vocab')
+{
+  // #1 explicit self-rating beats an incidental defect noun in the same sentence.
+  assert('"is fair ... some cracking" -> Fair (not Poor)', deriveCondition('the foundation is fair but there is some cracking') === 'Fair', deriveCondition('the foundation is fair but there is some cracking'))
+  assert('"in good condition ... small crack" -> Good', deriveCondition('the unit is in good condition despite a small crack') === 'Good', deriveCondition('the unit is in good condition despite a small crack'))
+  // #2 word-boundary: "dated" must NOT fire inside "updated"/"outdated".
+  assert('"excellent and recently updated" -> Good (not Fair)', deriveCondition('the appliances are excellent and recently updated') === 'Good', deriveCondition('the appliances are excellent and recently updated'))
+  assert('"recently updated" alone -> Good', deriveCondition('the kitchen was recently updated') === 'Good', deriveCondition('the kitchen was recently updated'))
+  assert('"outdated" still -> Fair', deriveCondition('the fixtures are outdated') === 'Fair', deriveCondition('the fixtures are outdated'))
+  assert('standalone "dated" -> Fair', deriveCondition('the finishes look dated') === 'Fair', deriveCondition('the finishes look dated'))
+  // #4 expanded defect vocabulary no longer silently N/A.
+  assert('"discolored" -> Fair', deriveCondition('the ceiling is discolored') === 'Fair', deriveCondition('the ceiling is discolored'))
+  assert('"loud" -> Fair', deriveCondition('the fan is loud') === 'Fair', deriveCondition('the fan is loud'))
+  assert('"dented" -> Fair', deriveCondition('the door is dented') === 'Fair', deriveCondition('the door is dented'))
+  assert('"loose" -> Poor', deriveCondition('the railing is loose') === 'Poor', deriveCondition('the railing is loose'))
+  // baseline unchanged
+  assert('no cue -> N/A', deriveCondition('the corridor leads to the exits') === 'N/A', deriveCondition('the corridor leads to the exits'))
+}
+
+console.log('\n[13] Unfiled photo attributes to the area currently being discussed (last mentioned)')
+{
+  // Kitchen -> Bathroom -> back to Kitchen. First-mention order is [kitchen, bathroom],
+  // so the naive "last array element" would be Bathroom; the last MENTIONED area is Kitchen.
+  const NARR = 'The kitchen sink drips. The bathroom fan is loud. Back in the kitchen the tile is cracked.'
+  const secs = segmentNarrative(NARR)
+  assert('sections are [kitchen, bathroom] in first-mention order', JSON.stringify(secs.map((s) => s.key)) === JSON.stringify(['kitchen', 'bathroom']), secs.map((s) => s.key).join(','))
+  assert('last-mentioned area is kitchen (not the last array element bathroom)', lastMentionedKey(NARR) === 'kitchen', String(lastMentionedKey(NARR)))
+  assert('empty narrative -> null (falls back to General)', lastMentionedKey('') === null, String(lastMentionedKey('')))
 }
 
 // --- Minimal ZIP entry reader ----------------------------------------------
