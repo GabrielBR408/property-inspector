@@ -4,6 +4,7 @@
 // textarea fallback).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { track } from './track.js'
 
 function getRecognition() {
   if (typeof window === 'undefined') return null
@@ -51,10 +52,10 @@ export function useVoice(onFinal) {
       }
       setInterim(interimText)
     }
-    rec.onerror = () => { setListening(false); setInterim('') }
+    rec.onerror = () => { setListening(false); setInterim(''); track('inspector', 'error', { reason: 'dictation_error' }) }
     rec.onend = () => { setListening(false); setInterim('') }
     recRef.current = rec
-    try { rec.start(); setListening(true) } catch (_e) { setListening(false) }
+    try { rec.start(); setListening(true); track('inspector', 'dictation_started') } catch (_e) { setListening(false); track('inspector', 'error', { reason: 'dictation_start_failed' }) }
   }, [stop])
 
   useEffect(() => () => stop(), [stop])

@@ -8,6 +8,7 @@ import { downloadPdf } from './lib/exportPdf.js'
 import { downloadDocx } from './lib/exportDocx.js'
 import { saveReport, loadReport, clearReport } from './lib/db.js'
 import { registerPWA } from './pwa/registerUpdate.js'
+import { track } from './lib/track.js'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const sectionId = (key) => `sec_${key}`
@@ -28,8 +29,10 @@ export default function App() {
   const [exporting, setExporting] = useState('')
   const [update, setUpdate] = useState(null)
   const loaded = useRef(false)
+  const lastSectionCount = useRef(0)
 
   useEffect(() => {
+    track('inspector', 'app_opened')
     loadReport().then((saved) => {
       if (saved && saved.sections) setReport(saved)
       loaded.current = true
@@ -37,6 +40,14 @@ export default function App() {
     const dispose = registerPWA((apply) => setUpdate(() => apply))
     return dispose
   }, [])
+
+  // Fire once per change in detected-section count (not on every keystroke).
+  useEffect(() => {
+    if (report.sections.length !== lastSectionCount.current) {
+      lastSectionCount.current = report.sections.length
+      track('inspector', 'sections_detected', { count: report.sections.length })
+    }
+  }, [report.sections.length])
 
   useEffect(() => {
     if (!loaded.current) return
@@ -91,8 +102,10 @@ export default function App() {
       setDraftMsg(source === 'ai'
         ? 'Drafted with AI — sections and summary generated. Everything below is editable.'
         : 'Drafted offline (deterministic) — sections and summary generated. Everything below is editable.')
+      track('inspector', 'draft_generated', { source: source === 'ai' ? 'ai' : 'deterministic' })
     } catch (_e) {
       setDraftMsg('Could not draft — please try again.')
+      track('inspector', 'error', { reason: 'draft_failed' })
     } finally { setDrafting(false) }
   }
 
@@ -102,8 +115,10 @@ export default function App() {
       const base = (report.property || report.address || 'inspection').replace(/[^\w.-]+/g, '_').slice(0, 40)
       if (kind === 'pdf') await downloadPdf(report, `${base}.pdf`)
       else await downloadDocx(report, `${base}.docx`)
+      track('inspector', kind === 'pdf' ? 'export_pdf' : 'export_docx')
     } catch (e) {
       setDraftMsg(`Export failed: ${String(e && e.message ? e.message : e)}`)
+      track('inspector', 'error', { reason: 'export_failed' })
     } finally { setExporting('') }
   }
 
