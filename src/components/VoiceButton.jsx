@@ -6,7 +6,7 @@ import { useVoice } from '../lib/useVoice.js'
 // recognition is unsupported — the parent always keeps a textarea so manual
 // entry still works.
 export default function VoiceButton({ onText, onStop, label = 'Dictate', compact = false }) {
-  const { listening, interim, start, stop, supported } = useVoice(onText, onStop)
+  const { listening, interim, notice, start, stop, supported } = useVoice(onText, onStop)
 
   if (!supported) {
     return <span className="voice-unsupported" title="Voice not supported in this browser — type instead">🎤 n/a</span>
@@ -23,6 +23,7 @@ export default function VoiceButton({ onText, onStop, label = 'Dictate', compact
         {listening ? 'Listening…' : label}
       </button>
       {listening && interim ? <span className="voice-interim">{interim}</span> : null}
+      {!listening && notice ? <span className="voice-interim" role="status">{notice}</span> : null}
     </span>
   )
 }

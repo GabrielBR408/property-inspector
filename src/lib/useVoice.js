@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { track } from './track.js'
+import { classifyDictationError } from './voiceErrors.js'
 
 function getRecognition() {
   if (typeof window === 'undefined') return null
@@ -19,7 +20,9 @@ export function isVoiceSupported() {
 // onFinal(text) is called with each finalized chunk of transcript. Optional
 // onEnd() fires once when recognition stops (user toggle or natural end) — used
 // to trigger a one-shot AI enhancement pass. The hook exposes
-// { listening, interim, start, stop, supported }.
+// { listening, interim, notice, start, stop, supported } — `notice` is a
+// plain-English hint when dictation ends abnormally (mic blocked, offline,
+// silence timeout), cleared on the next start.
 // Browsers run at most one SpeechRecognition at a time; when a second voice
 // button starts, cleanly stop whichever instance is live (its own onend still
 // fires, so its UI resets and its onEnd pass runs).
@@ -28,6 +31,7 @@ let stopActive = null
 export function useVoice(onFinal, onEnd) {
   const [listening, setListening] = useState(false)
   const [interim, setInterim] = useState('')
+  const [notice, setNotice] = useState('')
   const recRef = useRef(null)
   const onFinalRef = useRef(onFinal)
   onFinalRef.current = onFinal
@@ -53,6 +57,7 @@ export function useVoice(onFinal, onEnd) {
     if (stopActive) { try { stopActive() } catch (_e) { /* ignore */ } }
     const rec = getRecognition()
     if (!rec) return
+    setNotice('')
     rec.continuous = true
     rec.interimResults = true
     rec.lang = 'en-US'
@@ -69,7 +74,17 @@ export function useVoice(onFinal, onEnd) {
       }
       setInterim(interimText)
     }
-    rec.onerror = () => { setListening(false); setInterim(''); track('error', { reason: 'dictation_error' }) }
+    rec.onerror = (e) => {
+      // Classify by the spec error code: benign ends (silence timeout, our own
+      // deliberate stop when the other mic button starts) are NOT errors and
+      // must not pollute analytics; real failures carry the code so the
+      // dashboard can distinguish mic-blocked / offline / no-device.
+      const info = classifyDictationError(e && e.error)
+      setListening(false); setInterim('')
+      if (info.message) setNotice(info.message)
+      if (!info.benign) track('error', { reason: 'dictation_error', code: info.code })
+      else if (info.code === 'no-speech') track('dictation_no_speech')
+    }
     rec.onend = () => {
       if (stopActive === stopThis) stopActive = null
       setListening(false); setInterim('')
@@ -79,10 +94,14 @@ export function useVoice(onFinal, onEnd) {
     const stopThis = () => { try { rec.stop() } catch (_e) { /* ignore */ } }
     try {
       rec.start(); setListening(true); stopActive = stopThis; track('dictation_started')
-    } catch (_e) { setListening(false); track('error', { reason: 'dictation_start_failed' }) }
+    } catch (_e) {
+      setListening(false)
+      setNotice('Couldn’t start dictation — tap the mic to try again, or type instead.')
+      track('error', { reason: 'dictation_start_failed' })
+    }
   }, [stop])
 
   useEffect(() => () => stop(), [stop])
 
-  return { listening, interim, start, stop, supported: isVoiceSupported() }
+  return { listening, interim, notice, start, stop, supported: isVoiceSupported() }
 }

@@ -17,6 +17,7 @@ import { buildExportModel, exportSectionKeys } from '../src/lib/exportModel.js'
 import { renderPdfLines, pdfToArrayBuffer } from '../src/lib/exportPdf.js'
 import { docxToBuffer } from '../src/lib/exportDocx.js'
 import { dataUrlToBytes, imageSize, fitBox } from '../src/lib/imageMeta.js'
+import { classifyDictationError } from '../src/lib/voiceErrors.js'
 
 let passed = 0
 const failures = []
@@ -470,6 +471,27 @@ console.log('\n[23] Exports never silently drop an undecodable photo')
   const xml = unzipEntry(await docxToBuffer(model), 'word/document.xml')
   assert('DOCX embeds the good photo', xml.includes('<w:drawing>'))
   assert('DOCX reports the undecodable photo', xml.includes('could not be embedded'))
+}
+
+console.log('\n[24] Dictation error classification: benign ends are not errors, real failures explain themselves')
+{
+  const noSpeech = classifyDictationError('no-speech')
+  assert('silence timeout (no-speech) is benign', noSpeech.benign === true)
+  assert('no-speech still hints the user to retry', noSpeech.message.length > 0, noSpeech.message)
+  const aborted = classifyDictationError('aborted')
+  assert('deliberate stop (aborted) is benign', aborted.benign === true)
+  assert('aborted is SILENT (our own mic-switch must not flash a message)', aborted.message === '', aborted.message)
+  const denied = classifyDictationError('not-allowed')
+  assert('mic permission denial is a real failure', denied.benign === false)
+  assert('denial message names the microphone', /microphone|mic/i.test(denied.message), denied.message)
+  assert('service-not-allowed maps like not-allowed', classifyDictationError('service-not-allowed').benign === false)
+  const net = classifyDictationError('network')
+  assert('offline recognition is a real failure', net.benign === false)
+  assert('offline message says to type instead', /type instead/i.test(net.message), net.message)
+  assert('no-mic-device is a real failure with a message', classifyDictationError('audio-capture').benign === false && classifyDictationError('audio-capture').message.length > 0)
+  const unknown = classifyDictationError(undefined)
+  assert('unknown/absent code is a real failure with a generic message', unknown.benign === false && unknown.message.length > 0)
+  assert('the raw code is preserved for analytics', classifyDictationError('language-not-supported').code === 'language-not-supported')
 }
 
 // --- Minimal ZIP entry reader ----------------------------------------------
