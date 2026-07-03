@@ -32,3 +32,40 @@ export function classifyDictationError(code) {
       return { code: c, benign: false, message: 'Dictation stopped unexpectedly — tap the mic to retry, or type instead.' }
   }
 }
+
+// --- Privacy-safe diagnostic properties --------------------------------------
+// Everything below produces BOUNDED enum-like values only — never transcript
+// text, PII, or free-form user content (the self-check asserts this). The full
+// user_agent already rides along as its own event column; `ua` here is a
+// dashboard-friendly class so nobody has to parse UA strings.
+
+export function uaClass(ua) {
+  const s = String(ua || '').toLowerCase()
+  const os = /iphone|ipad|ipod/.test(s) ? 'ios'
+    : /android/.test(s) ? 'android'
+    : /windows/.test(s) ? 'windows'
+    : /mac os|macintosh/.test(s) ? 'mac'
+    : 'other'
+  const browser = /edg(?:e|a|ios)?\//.test(s) ? 'edge'
+    : /crios|chrome/.test(s) ? 'chrome'
+    : /firefox|fxios/.test(s) ? 'firefox'
+    : /safari/.test(s) ? 'safari'
+    : 'other'
+  return `${browser}-${os}`
+}
+
+// Assemble the diagnostic payload for a dictation analytics event:
+//   code   — SpeechRecognition error code (or 'start-failed'), clamped
+//   source — which flow the mic belongs to: 'details' | 'walkthrough' | 'unknown'
+//   online — navigator.onLine at the moment of failure
+//   mic    — Permissions API state: granted | denied | prompt | unknown
+//   ua     — bounded browser-os class (see uaClass)
+export function dictationEventProps({ code, source, online, mic, ua } = {}) {
+  return {
+    code: String(code || 'unknown').slice(0, 32),
+    source: source === 'details' || source === 'walkthrough' ? source : 'unknown',
+    online: online !== false,
+    mic: mic === 'granted' || mic === 'denied' || mic === 'prompt' ? mic : 'unknown',
+    ua: uaClass(ua)
+  }
+}

@@ -17,7 +17,7 @@ import { buildExportModel, exportSectionKeys } from '../src/lib/exportModel.js'
 import { renderPdfLines, pdfToArrayBuffer } from '../src/lib/exportPdf.js'
 import { docxToBuffer } from '../src/lib/exportDocx.js'
 import { dataUrlToBytes, imageSize, fitBox } from '../src/lib/imageMeta.js'
-import { classifyDictationError } from '../src/lib/voiceErrors.js'
+import { classifyDictationError, dictationEventProps, uaClass } from '../src/lib/voiceErrors.js'
 
 let passed = 0
 const failures = []
@@ -492,6 +492,34 @@ console.log('\n[24] Dictation error classification: benign ends are not errors, 
   const unknown = classifyDictationError(undefined)
   assert('unknown/absent code is a real failure with a generic message', unknown.benign === false && unknown.message.length > 0)
   assert('the raw code is preserved for analytics', classifyDictationError('language-not-supported').code === 'language-not-supported')
+}
+
+console.log('\n[25] Dictation diagnostics are bounded and privacy-safe (no free text, no transcript)')
+{
+  // UA classing on representative strings — bounded browser-os enums only.
+  assert('Chrome on Android classes', uaClass('Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36') === 'chrome-android')
+  assert('Safari on iPhone classes', uaClass('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1') === 'safari-ios')
+  assert('Edge on Windows classes', uaClass('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 Edg/126.0') === 'edge-windows')
+  assert('Firefox on Mac classes', uaClass('Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:127.0) Gecko/20100101 Firefox/127.0') === 'firefox-mac')
+  assert('empty UA still yields a bounded class', uaClass('') === 'other-other', uaClass(''))
+
+  // The props builder emits ONLY the expected keys with bounded values —
+  // hostile/free-form input cannot smuggle text into the analytics event.
+  const props = dictationEventProps({
+    code: 'network'.padEnd(500, 'x'), // oversized code gets clamped
+    source: 'the entire spoken transcript should never end up here',
+    online: false,
+    mic: 'granted',
+    ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Safari/604.1'
+  })
+  assert('props expose exactly the five diagnostic keys', JSON.stringify(Object.keys(props).sort()) === JSON.stringify(['code', 'mic', 'online', 'source', 'ua']), Object.keys(props).join(','))
+  assert('code is clamped to 32 chars', props.code.length <= 32, String(props.code.length))
+  assert('unrecognized source collapses to "unknown"', props.source === 'unknown', props.source)
+  assert('offline flag is a boolean', props.online === false)
+  assert('mic state passes through only known values', props.mic === 'granted' && dictationEventProps({ mic: 'PII here' }).mic === 'unknown')
+  assert('ua is the bounded class, never the raw string', props.ua === 'safari-ios', props.ua)
+  assert('known sources pass through', dictationEventProps({ source: 'details' }).source === 'details' && dictationEventProps({ source: 'walkthrough' }).source === 'walkthrough')
+  assert('empty input yields safe defaults', JSON.stringify(dictationEventProps({})) === JSON.stringify({ code: 'unknown', source: 'unknown', online: true, mic: 'unknown', ua: 'other-other' }), JSON.stringify(dictationEventProps({})))
 }
 
 // --- Minimal ZIP entry reader ----------------------------------------------

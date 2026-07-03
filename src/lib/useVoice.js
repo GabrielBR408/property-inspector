@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { track } from './track.js'
-import { classifyDictationError } from './voiceErrors.js'
+import { classifyDictationError, dictationEventProps } from './voiceErrors.js'
 
 function getRecognition() {
   if (typeof window === 'undefined') return null
@@ -15,6 +15,34 @@ function getRecognition() {
 
 export function isVoiceSupported() {
   return typeof window !== 'undefined' && !!(window.SpeechRecognition || window.webkitSpeechRecognition)
+}
+
+// Mic permission state for diagnostics: granted | denied | prompt | unknown.
+// Safari has no 'microphone' permission name and throws — that's 'unknown'.
+async function micPermission() {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.permissions || !navigator.permissions.query) return 'unknown'
+    const st = await navigator.permissions.query({ name: 'microphone' })
+    return (st && st.state) || 'unknown'
+  } catch (_e) { return 'unknown' }
+}
+
+// Fire a dictation analytics event enriched with privacy-safe diagnostics
+// (bounded enums/flags only — see voiceErrors.dictationEventProps). Async only
+// because of the permission query; fire-and-forget like track itself.
+function trackDictation(event, code, source, extra = {}) {
+  micPermission().then((mic) => {
+    track(event, {
+      ...extra,
+      ...dictationEventProps({
+        code,
+        source,
+        online: typeof navigator !== 'undefined' ? navigator.onLine : true,
+        mic,
+        ua: typeof navigator !== 'undefined' ? navigator.userAgent : ''
+      })
+    })
+  })
 }
 
 // onFinal(text) is called with each finalized chunk of transcript. Optional
@@ -28,7 +56,7 @@ export function isVoiceSupported() {
 // fires, so its UI resets and its onEnd pass runs).
 let stopActive = null
 
-export function useVoice(onFinal, onEnd) {
+export function useVoice(onFinal, onEnd, source = 'unknown') {
   const [listening, setListening] = useState(false)
   const [interim, setInterim] = useState('')
   const [notice, setNotice] = useState('')
@@ -82,8 +110,8 @@ export function useVoice(onFinal, onEnd) {
       const info = classifyDictationError(e && e.error)
       setListening(false); setInterim('')
       if (info.message) setNotice(info.message)
-      if (!info.benign) track('error', { reason: 'dictation_error', code: info.code })
-      else if (info.code === 'no-speech') track('dictation_no_speech')
+      if (!info.benign) trackDictation('error', info.code, source, { reason: 'dictation_error' })
+      else if (info.code === 'no-speech') trackDictation('dictation_no_speech', info.code, source)
     }
     rec.onend = () => {
       if (stopActive === stopThis) stopActive = null
@@ -97,9 +125,9 @@ export function useVoice(onFinal, onEnd) {
     } catch (_e) {
       setListening(false)
       setNotice('Couldn’t start dictation — tap the mic to try again, or type instead.')
-      track('error', { reason: 'dictation_start_failed' })
+      trackDictation('error', 'start-failed', source, { reason: 'dictation_start_failed' })
     }
-  }, [stop])
+  }, [stop, source])
 
   useEffect(() => () => stop(), [stop])
 

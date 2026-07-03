@@ -5,8 +5,10 @@ import { useVoice } from '../lib/useVoice.js'
 // onStop() fires when recognition ends. Renders a disabled hint when speech
 // recognition is unsupported — the parent always keeps a textarea so manual
 // entry still works.
-export default function VoiceButton({ onText, onStop, label = 'Dictate', compact = false }) {
-  const { listening, interim, notice, start, stop, supported } = useVoice(onText, onStop)
+// `source` tags this button's analytics events ('details' | 'walkthrough') so
+// the dashboard can tell which dictation flow a failure came from.
+export default function VoiceButton({ onText, onStop, label = 'Dictate', compact = false, source = 'unknown' }) {
+  const { listening, interim, notice, start, stop, supported } = useVoice(onText, onStop, source)
 
   if (!supported) {
     return <span className="voice-unsupported" title="Voice not supported in this browser — type instead">🎤 n/a</span>
