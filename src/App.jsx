@@ -11,6 +11,12 @@ import { registerPWA } from './pwa/registerUpdate.js'
 import { parseDetails, parseDetailsSmart } from './lib/details.js'
 import { track } from './lib/track.js'
 
+// BRAND: absolute link back to the tools hub, shown at the top of the page. Set
+// only in the branded build; this white-label mirror sets it to null so the
+// button never renders here (keeps App.jsx otherwise identical between the two
+// repos). The branded build points it at its hub's absolute URL.
+const HUB_URL = null
+
 // LOCAL calendar date — not toISOString(), which is UTC and rolls to tomorrow
 // during evening inspections in any timezone west of Greenwich.
 const todayISO = () => {
@@ -204,6 +210,7 @@ export default function App() {
 
   return (
     <main className="page">
+      {HUB_URL && <a className="back-to-hub" href={HUB_URL}>← All Tools</a>}
       {update && (
         <div className="update-banner">
           <span className="update-banner-text">A new version is available.</span>
