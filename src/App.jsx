@@ -3,10 +3,10 @@ import SectionCard from './components/SectionCard.jsx'
 import VoiceButton from './components/VoiceButton.jsx'
 import { newReport } from './lib/schema.js'
 import { fileToPhoto } from './lib/db.js'
-import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys } from './lib/segment.js'
+import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys, proposeAreaLabels } from './lib/segment.js'
 import { downloadPdf } from './lib/exportPdf.js'
 import { downloadDocx } from './lib/exportDocx.js'
-import { saveReport, loadReport, clearReport } from './lib/db.js'
+import { saveReport, loadReport, clearReport, saveInspection, listSavedInspections, loadInspection, deleteInspection } from './lib/db.js'
 import { registerPWA } from './pwa/registerUpdate.js'
 import { parseDetails, parseDetailsSmart } from './lib/details.js'
 import { track } from './lib/track.js'
@@ -16,6 +16,10 @@ import { track } from './lib/track.js'
 // button never renders here (keeps App.jsx otherwise identical between the two
 // repos). The branded build points it at its hub's absolute URL.
 const HUB_URL = null
+
+// Build stamp injected by Vite (vite.config.js define). The typeof guard keeps
+// this file importable anywhere the define isn't applied.
+const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev'
 
 // LOCAL calendar date — not toISOString(), which is UTC and rolls to tomorrow
 // during evening inspections in any timezone west of Greenwich.
@@ -56,11 +60,27 @@ export default function App() {
   useEffect(() => {
     track('app_opened')
     loadReport().then((saved) => {
-      if (saved && saved.sections) setReport(saved)
+      // Only restore if the user hasn't already started working — IndexedDB
+      // resolves async, and a fast typist's first keystrokes must never be
+      // clobbered by a late-arriving restore of the previous report.
+      const cur = reportRef.current
+      const untouched = !cur.walkthrough && cur.sections.length === 0 && !cur.property && !cur.address && !cur.inspector
+      if (saved && saved.sections && untouched) setReport(saved)
       loaded.current = true
     })
     const dispose = registerPWA((apply) => setUpdate(() => apply))
-    return dispose
+    // Flush the debounced save when the tab hides/closes so the last ~400ms of
+    // typing or dictation is never lost to a sudden app switch (common in the
+    // field: dictate, then jump straight to the camera app).
+    const flush = () => { if (loaded.current) saveReport(reportRef.current) }
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush() }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', onVisibility)
+      dispose()
+    }
   }, [])
 
   // Fire once per change in detected-section count (not on every keystroke).
@@ -71,9 +91,16 @@ export default function App() {
     }
   }, [report.sections.length])
 
+  const [saveFailed, setSaveFailed] = useState(false)
   useEffect(() => {
     if (!loaded.current) return
-    const t = setTimeout(() => saveReport(report), 400)
+    const t = setTimeout(async () => {
+      const ok = await saveReport(report)
+      setSaveFailed((prev) => {
+        if (!ok && !prev) track('error', { reason: 'save_failed' })
+        return !ok
+      })
+    }, 400)
     return () => clearTimeout(t)
   }, [report])
 
@@ -110,6 +137,38 @@ export default function App() {
       applyDetails(p)
     } catch (_e) { /* deterministic fill already applied live */ }
   }
+
+  // --- Background area scan ---------------------------------------------------
+  // The built-in directory splits instantly; this fills its gaps. A few seconds
+  // after the walkthrough settles (and on every push-to-talk release), the FULL
+  // narrative is scanned by the AI for area labels the directory doesn't know
+  // ("coffee shop", "loading dock", tenant names). Learned labels extend live
+  // segmentation exactly like the Draft pass — a label only becomes a section
+  // if the narrative actually says it, and the summary is never touched.
+  const lastScan = useRef({ len: 0, at: 0 })
+  const scanForAreas = async () => {
+    const text = (reportRef.current.walkthrough || '').trim()
+    if (text.length < 30) return
+    const now = Date.now()
+    // Budget: skip if barely anything changed, and never more than ~3/min.
+    if (Math.abs(text.length - lastScan.current.len) < 15) return
+    if (now - lastScan.current.at < 20000) return
+    lastScan.current = { len: text.length, at: now }
+    const labels = await proposeAreaLabels(text)
+    if (!labels.length) return
+    setReport((r) => {
+      const merged = [...new Set([...(r.aiAreas || []), ...labels])]
+      if (merged.length === (r.aiAreas || []).length) return r
+      track('area_labels_learned', { count: merged.length - (r.aiAreas || []).length })
+      const next = { ...r, aiAreas: merged }
+      return { ...next, sections: resegment(next, next.walkthrough) }
+    })
+  }
+  useEffect(() => {
+    if (!loaded.current) return
+    const t = setTimeout(scanForAreas, 3000)
+    return () => clearTimeout(t)
+  }, [report.walkthrough])
 
   // Walkthrough edits drive the section list.
   const setWalkthrough = (text) =>
@@ -180,6 +239,12 @@ export default function App() {
   }
 
   const onExport = async (kind) => {
+    // A truly empty report exports as a blank page — confusing, not useful.
+    // Point back to the walkthrough instead. Any content at all still exports.
+    if (!report.sections.length && !(report.walkthrough || '').trim() && !(report.summary || '').trim()) {
+      setExportMsg('Nothing to export yet — dictate or type your walkthrough above and sections will appear.')
+      return
+    }
     setExporting(kind)
     setExportMsg('')
     try {
@@ -193,6 +258,58 @@ export default function App() {
       track('error', { reason: 'export_failed' })
     } finally { setExporting('') }
   }
+
+  // --- Saved inspections library ----------------------------------------------
+  const [saved, setSaved] = useState([])
+  const [showSaved, setShowSaved] = useState(false)
+  const [libMsg, setLibMsg] = useState('')
+  useEffect(() => { listSavedInspections().then(setSaved) }, [])
+
+  const onSaveInspection = async () => {
+    let property = (report.property || '').trim()
+    if (!property) {
+      property = (window.prompt('Which property is this inspection for?') || '').trim()
+      if (!property) return
+      setHeader({ property })
+    }
+    const id = await saveInspection({ ...report, property })
+    if (id) {
+      if (!report.savedId) setReport((r) => ({ ...r, savedId: id }))
+      setSaved(await listSavedInspections())
+      setLibMsg(`Saved under “${property}”.`)
+      track('inspection_saved')
+    } else {
+      setLibMsg('Could not save — storage may be full. Export a copy to be safe.')
+      track('error', { reason: 'inspection_save_failed' })
+    }
+  }
+
+  const onOpenInspection = async (id) => {
+    const hasWork = (report.walkthrough || '').trim() || report.sections.length > 0
+    if (hasWork && !window.confirm('Open this saved inspection? It will replace what is on screen. (Save the current one first if you want to keep it.)')) return
+    const r = await loadInspection(id)
+    if (!r) { setLibMsg('Could not open that inspection.'); return }
+    setReport(r)
+    setShowSaved(false)
+    setLibMsg('')
+    setDraftMsg('')
+    track('inspection_opened')
+  }
+
+  const onDeleteInspection = async (id) => {
+    if (!window.confirm('Delete this saved inspection? This cannot be undone.')) return
+    await deleteInspection(id)
+    setSaved(await listSavedInspections())
+    // If the open report was this saved entry, detach it so re-saving creates a fresh one.
+    setReport((r) => (r.savedId === id ? { ...r, savedId: undefined } : r))
+    track('inspection_deleted')
+  }
+
+  const savedByProperty = saved.reduce((acc, m) => {
+    const key = m.property || m.address || 'Untitled property'
+    ;(acc[key] = acc[key] || []).push(m)
+    return acc
+  }, {})
 
   const onReset = async () => {
     if (!window.confirm('Start a new inspection? This clears the current one.')) return
@@ -215,13 +332,55 @@ export default function App() {
         <div className="update-banner">
           <span className="update-banner-text">A new version is available.</span>
           <button className="update-banner-btn" onClick={() => update()}>Reload</button>
-          <button className="update-banner-dismiss" onClick={() => setUpdate(null)}>×</button>
+          <button className="update-banner-dismiss" onClick={() => setUpdate(null)} aria-label="Dismiss update notice">×</button>
+        </div>
+      )}
+      {saveFailed && (
+        <div className="save-warning" role="alert">
+          Couldn't save your report to this device — storage may be full. Export a PDF or Word copy now so nothing is lost.
         </div>
       )}
 
       <header className="masthead">
-        <h1 className="wordmark">Property Inspector</h1>
+        <div className="masthead-brand">
+          <h1 className="wordmark">Property Inspector</h1>
+        </div>
+        <div className="masthead-actions">
+          <button type="button" className="new-inspection-btn" onClick={onReset}>
+            <span aria-hidden="true">+</span> New inspection
+          </button>
+          <button type="button" className="new-inspection-btn" onClick={onSaveInspection}>
+            Save inspection
+          </button>
+        </div>
       </header>
+
+      {libMsg && <p className="masthead-msg" role="status">{libMsg}</p>}
+
+      {saved.length > 0 && (
+        <section className="saved-panel">
+          <button type="button" className="saved-toggle" onClick={() => setShowSaved((v) => !v)} aria-expanded={showSaved}>
+            Saved inspections ({saved.length}) <span aria-hidden="true">{showSaved ? '▴' : '▾'}</span>
+          </button>
+          {showSaved && Object.keys(savedByProperty).sort((a, b) => a.localeCompare(b)).map((prop) => (
+            <div key={prop} className="saved-group">
+              <p className="saved-prop">{prop}</p>
+              {savedByProperty[prop].map((m) => (
+                <div key={m.id} className="saved-row">
+                  <span className="saved-meta">
+                    {m.date || '—'} · {m.sections} area{m.sections === 1 ? '' : 's'} · {m.photos} photo{m.photos === 1 ? '' : 's'}
+                    {report.savedId === m.id ? ' · open now' : ''}
+                  </span>
+                  <span className="saved-actions">
+                    <button type="button" className="mini-btn" onClick={() => onOpenInspection(m.id)}>Open</button>
+                    <button type="button" className="icon-btn" onClick={() => onDeleteInspection(m.id)} title="Delete saved inspection" aria-label={`Delete saved inspection for ${prop}`}>✕</button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </section>
+      )}
 
       <p className="hero-line">Just talk. Sections appear as you go.</p>
 
@@ -229,10 +388,10 @@ export default function App() {
         <div className="step-head">
           <span className="step-eyebrow">Report details</span>
           <h2 className="step-title">Property &amp; inspector</h2>
-          <p className="step-note">Type below, or dictate — e.g. “Property is Maple Court Apartments, 123 Main St Unit 4, inspector Jane Doe, today.” Only what you say fills in.</p>
+          <p className="step-note">Type below, or hold the mic and dictate — e.g. “Property is Maple Court Apartments, 123 Main St Unit 4, inspector Jane Doe, today.” Only what you say fills in.</p>
         </div>
         <div className="walkthrough-tools">
-          <VoiceButton onText={onDetailsChunk} onStop={onDetailsStop} label="Dictate details" source="details" />
+          <VoiceButton onText={onDetailsChunk} onStop={onDetailsStop} label="Hold to dictate details" source="details" />
         </div>
         <div className="header-grid">
           <label className="hg"><span>Property</span>
@@ -251,10 +410,10 @@ export default function App() {
         <div className="step-head">
           <span className="step-eyebrow">Walkthrough</span>
           <h2 className="step-title">Talk through the property</h2>
-          <p className="step-note">Name an area as you go (“in the kitchen…”, “the roof…”). A section pops up for each area you mention, with what you said attached. Nothing you didn’t say is added.</p>
+          <p className="step-note">Name an area as you go (“in the kitchen…”, “the roof…”). A section pops up for each area you mention, with what you said attached — uncommon area names are picked up automatically a few seconds after you pause. Nothing you didn’t say is added.</p>
         </div>
         <div className="walkthrough-tools">
-          <VoiceButton onText={appendWalkthrough} label="Dictate walkthrough" source="walkthrough" />
+          <VoiceButton onText={appendWalkthrough} onStop={scanForAreas} label="Hold to dictate walkthrough" source="walkthrough" />
         </div>
         <textarea
           className="walkthrough-text"
@@ -286,7 +445,7 @@ export default function App() {
         )}
 
         <div className="unfiled-photo">
-          <button type="button" className="mini-btn" onClick={() => unfiledRef.current?.click()}>🖼 Add photo (to current area)</button>
+          <button type="button" className="mini-btn" onClick={() => unfiledRef.current?.click()}><span aria-hidden="true">🖼</span> Add photo (to current area)</button>
           <input ref={unfiledRef} type="file" accept="image/*" multiple hidden
             onChange={(e) => { addUnfiledPhoto(e.target.files); e.target.value = '' }} />
         </div>
@@ -295,7 +454,7 @@ export default function App() {
       {/* Draft */}
       <section className="step step--generate">
         <button className="generate-btn" onClick={onDraft} disabled={drafting}>
-          {drafting ? 'Drafting…' : '✨ Draft report'}
+          {drafting ? 'Drafting…' : <><span aria-hidden="true">✨</span> Draft report</>}
         </button>
         {draftMsg && <p className="generate-msg generate-msg--info">{draftMsg}</p>}
       </section>
@@ -323,10 +482,10 @@ export default function App() {
         </div>
         <div className="export-actions">
           <button className="export-btn" onClick={() => onExport('pdf')} disabled={!!exporting}>
-            {exporting === 'pdf' ? 'Preparing PDF…' : '⬇ PDF'}
+            {exporting === 'pdf' ? 'Preparing PDF…' : <><span aria-hidden="true">⬇</span> PDF</>}
           </button>
           <button className="export-btn export-btn--secondary" onClick={() => onExport('docx')} disabled={!!exporting}>
-            {exporting === 'docx' ? 'Preparing DOCX…' : '⬇ Editable Word (.docx)'}
+            {exporting === 'docx' ? 'Preparing DOCX…' : <><span aria-hidden="true">⬇</span> Editable Word (.docx)</>}
           </button>
         </div>
         {exportMsg && <p className="generate-msg generate-msg--info">{exportMsg}</p>}
@@ -336,6 +495,7 @@ export default function App() {
       <footer className="site-footer">
         <p className="site-footer-line">Property Inspector · works offline · your notes and photos stay on this device.</p>
         <p className="site-footer-line site-footer-line--muted">Sections are built only from what you said — the AI proposes area labels and the summary, but never invents observations, areas, or ratings.</p>
+        <p className="site-footer-line site-footer-line--muted">{APP_VERSION}</p>
       </footer>
     </main>
   )

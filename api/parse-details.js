@@ -8,6 +8,8 @@
 // The model is instructed to NEVER invent a value that was not spoken — an
 // unmentioned field must come back as "".
 
+import { allowRequest, clientIp, tooMany } from './_ratelimit.js'
+
 export const config = { api: { bodyParser: true } }
 
 const SYSTEM_PROMPT =
@@ -24,6 +26,7 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'POST')
     return res.end(JSON.stringify({ error: 'Method not allowed' }))
   }
+  if (!allowRequest(clientIp(req))) return tooMany(res)
   const body = req.body || {}
   // Cap inputs — publicly reachable endpoint; a dictated details utterance is
   // a sentence or two, never kilobytes.

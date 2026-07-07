@@ -14,6 +14,8 @@
 //
 // Set ANTHROPIC_API_KEY in the Vercel project env to enable the AI pass.
 
+import { allowRequest, clientIp, tooMany } from './_ratelimit.js'
+
 export const config = { api: { bodyParser: true } }
 
 const SYSTEM_PROMPT =
@@ -26,6 +28,14 @@ const SYSTEM_PROMPT =
   'Do NOT include an area the narrative does not name. Do NOT invent areas. ' +
   '"summary": one short paragraph overview of the property\'s condition based ONLY on ' +
   'what the narrative says — do not add findings, figures, or areas that are not in the narrative.'
+
+const LABELS_ONLY_PROMPT =
+  'You extract structure from a property inspector\'s spoken walkthrough. ' +
+  'Return STRICT JSON: {"areas": [..]}. ' +
+  '"areas": the list of distinct rooms/areas/places the narrative EXPLICITLY names ' +
+  '(e.g. "kitchen", "roof", "coffee shop", "loading dock"), as short lowercase phrases ' +
+  'copied verbatim from the narrative, in order of first mention. ' +
+  'Do NOT include an area the narrative does not name. Do NOT invent areas.'
 
 function deterministicSummary(body) {
   const where = body.address || body.property || 'the property'
@@ -41,6 +51,7 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'POST')
     return res.end(JSON.stringify({ error: 'Method not allowed' }))
   }
+  if (!allowRequest(clientIp(req))) return tooMany(res)
   const body = req.body || {}
   // Cap inputs: this endpoint is publicly reachable, so unbounded text would be
   // an open invitation to burn API credits. A real walkthrough fits well inside
@@ -52,9 +63,13 @@ export default async function handler(req, res) {
   body.inspector = clip(body.inspector, 200)
   body.date = clip(body.date, 40)
   const apiKey = process.env.ANTHROPIC_API_KEY
+  // Background area scans set labelsOnly: they want ONLY the area labels (the
+  // client must never overwrite the on-screen summary from a background pass),
+  // so skip the summary instruction and spend fewer tokens.
+  const labelsOnly = body.labelsOnly === true
 
   if (!apiKey || !narrative.trim()) {
-    return json(res, 200, { areas: [], summary: deterministicSummary(body), source: 'deterministic' })
+    return json(res, 200, { areas: [], summary: labelsOnly ? '' : deterministicSummary(body), source: 'deterministic' })
   }
 
   try {
@@ -66,8 +81,8 @@ export default async function handler(req, res) {
 
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT,
+      max_tokens: labelsOnly ? 300 : 1024,
+      system: labelsOnly ? LABELS_ONLY_PROMPT : SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userContent }]
     })
 
@@ -80,12 +95,12 @@ export default async function handler(req, res) {
     }
     return json(res, 200, {
       areas: Array.isArray(parsed.areas) ? parsed.areas.filter((a) => typeof a === 'string').slice(0, 40) : [],
-      summary: typeof parsed.summary === 'string' ? parsed.summary : deterministicSummary(body),
+      summary: labelsOnly ? '' : (typeof parsed.summary === 'string' ? parsed.summary : deterministicSummary(body)),
       source: 'ai'
     })
   } catch (err) {
     console.log('[draft] API call failed — deterministic fallback:', String(err && err.message ? err.message : err))
-    return json(res, 200, { areas: [], summary: deterministicSummary(body), source: 'deterministic' })
+    return json(res, 200, { areas: [], summary: labelsOnly ? '' : deterministicSummary(body), source: 'deterministic' })
   }
 }
 

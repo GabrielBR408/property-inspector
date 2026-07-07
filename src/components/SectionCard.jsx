@@ -29,6 +29,7 @@ export default function SectionCard({ section, onChange, onRemove }) {
       <div className="area-head">
         <input
           className="area-name"
+          aria-label="Area name"
           value={section.name}
           onChange={(e) => set({ name: e.target.value }, { nameEdited: true })}
           placeholder="Area name"
@@ -41,7 +42,7 @@ export default function SectionCard({ section, onChange, onRemove }) {
         >
           {CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-        <button type="button" className="icon-btn" onClick={onRemove} title="Remove section">✕</button>
+        <button type="button" className="icon-btn" onClick={onRemove} title="Remove section" aria-label={`Remove ${section.name || 'section'}`}>✕</button>
       </div>
 
       <textarea
@@ -53,8 +54,8 @@ export default function SectionCard({ section, onChange, onRemove }) {
       />
 
       <div className="item-actions">
-        <button type="button" className="mini-btn" onClick={() => cameraRef.current?.click()}>📷 Camera</button>
-        <button type="button" className="mini-btn" onClick={() => fileRef.current?.click()}>🖼 Add photo</button>
+        <button type="button" className="mini-btn" onClick={() => cameraRef.current?.click()}><span aria-hidden="true">📷</span> Camera</button>
+        <button type="button" className="mini-btn" onClick={() => fileRef.current?.click()}><span aria-hidden="true">🖼</span> Add photo</button>
         <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden
           onChange={(e) => { addPhotos(e.target.files); e.target.value = '' }} />
         <input ref={fileRef} type="file" accept="image/*" multiple hidden
@@ -66,7 +67,7 @@ export default function SectionCard({ section, onChange, onRemove }) {
           {section.photos.map((p) => (
             <div key={p.id} className="thumb">
               <img src={p.dataUrl} alt={p.name} />
-              <button type="button" className="thumb-x" onClick={() => removePhoto(p.id)} title="Remove photo">✕</button>
+              <button type="button" className="thumb-x" onClick={() => removePhoto(p.id)} title="Remove photo" aria-label="Remove photo">✕</button>
             </div>
           ))}
         </div>

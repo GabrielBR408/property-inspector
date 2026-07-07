@@ -1,6 +1,14 @@
+import { readFileSync } from 'node:fs'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+
+// Build-time version stamp shown in the app footer, so anyone can tell at a
+// glance which build they're looking at. On Vercel the git SHA rides along;
+// local builds show just the package version.
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
+const sha = String(process.env.VERCEL_GIT_COMMIT_SHA || '').slice(0, 7)
+const appVersion = `v${pkg.version}${sha ? ` · ${sha}` : ''}`
 
 // Base public path. '/' for standalone Vercel deploy (property-inspector.vercel.app).
 // If this app is ever proxied onto the an internal hub under a sub-path,
@@ -9,6 +17,7 @@ const base = process.env.VITE_BASE || '/'
 
 export default defineConfig({
   base,
+  define: { __APP_VERSION__: JSON.stringify(appVersion) },
   plugins: [
     react(),
     VitePWA({

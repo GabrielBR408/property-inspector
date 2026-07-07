@@ -1,7 +1,7 @@
 {
   "name": "property-inspector",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Property Inspector — talk-and-photo AI property inspection PWA that drafts an editable report and exports PDF/DOCX.",
   "scripts": {

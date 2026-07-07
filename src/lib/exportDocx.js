@@ -3,25 +3,18 @@
 // pure (no DOM) so the self-check can pack it to a Buffer in Node and unzip to
 // verify every section is present. The browser download helper is separate.
 
-import {
-  Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun
-} from 'docx'
 import { buildExportModel } from './exportModel.js'
 import { dataUrlParts, dataUrlToBytes, imageSize, fitBox } from './imageMeta.js'
+
+// The docx library is heavy (~150 KB gzipped) and only needed at export time,
+// so it is loaded lazily — like jsPDF in exportPdf.js — keeping it out of the
+// main bundle the PWA must download and precache. Works in Node (self-check)
+// and the browser alike.
+const loadDocx = () => import('docx')
 
 const NAVY = '1F2937'
 const ACCENT = '475569'
 const MUTED = '6B7280'
-
-function headerLine(label, value) {
-  return new Paragraph({
-    spacing: { after: 40 },
-    children: [
-      new TextRun({ text: `${label}: `, bold: true, color: NAVY }),
-      new TextRun({ text: value || '—', color: NAVY })
-    ]
-  })
-}
 
 function condColor(condition) {
   if (condition === 'Poor') return 'B4452F'
@@ -30,7 +23,15 @@ function condColor(condition) {
   return MUTED
 }
 
-export function buildDocxDocument(reportOrModel) {
+export async function buildDocxDocument(reportOrModel) {
+  const { Document, Paragraph, TextRun, HeadingLevel, ImageRun } = await loadDocx()
+  const headerLine = (label, value) => new Paragraph({
+    spacing: { after: 40 },
+    children: [
+      new TextRun({ text: `${label}: `, bold: true, color: NAVY }),
+      new TextRun({ text: value || '—', color: NAVY })
+    ]
+  })
   const model = reportOrModel.sections && reportOrModel.header ? reportOrModel : buildExportModel(reportOrModel)
   const children = []
 
@@ -111,12 +112,14 @@ export function buildDocxDocument(reportOrModel) {
 
 // Node: return a Buffer. Used by the self-check.
 export async function docxToBuffer(reportOrModel) {
-  return Packer.toBuffer(buildDocxDocument(reportOrModel))
+  const { Packer } = await loadDocx()
+  return Packer.toBuffer(await buildDocxDocument(reportOrModel))
 }
 
 // Browser: trigger a download.
 export async function downloadDocx(report, filename = 'inspection-report.docx') {
-  const blob = await Packer.toBlob(buildDocxDocument(report))
+  const { Packer } = await loadDocx()
+  const blob = await Packer.toBlob(await buildDocxDocument(report))
   triggerDownload(blob, filename)
 }
 
