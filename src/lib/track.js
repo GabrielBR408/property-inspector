@@ -25,13 +25,27 @@ function getSessionId() {
   }
 }
 
+// Self-tagging for internal traffic: visiting once with #internal (or ?internal=1)
+// permanently marks this browser via localStorage; every event afterward carries
+// properties.internal = true so the dashboard can filter it out. Never throws.
+function isInternal() {
+  try {
+    if (/[#?&]internal\b/.test(location.hash + location.search)) {
+      localStorage.setItem('inspector_internal', '1')
+    }
+    return localStorage.getItem('inspector_internal') === '1'
+  } catch {
+    return false
+  }
+}
+
 export function track(event, properties = {}) {
   try {
     const body = JSON.stringify({
       app: APP_TAG,
       event,
       session_id: getSessionId(),
-      properties,
+      properties: Object.assign({}, properties || {}, isInternal() ? { internal: true } : {}),
       path: window.location.pathname,
       user_agent: navigator.userAgent
     })
