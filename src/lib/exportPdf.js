@@ -6,6 +6,7 @@
 
 import { buildExportModel } from './exportModel.js'
 import { dataUrlParts, dataUrlToBytes, imageSize, fitBox } from './imageMeta.js'
+import { BRAND } from './brand.js'
 
 const NAVY = [31, 41, 55]
 const ACCENT = [71, 85, 105]
@@ -24,12 +25,13 @@ function condColor(condition) {
 export function renderPdfLines(reportOrModel) {
   const model = reportOrModel.sections && reportOrModel.header ? reportOrModel : buildExportModel(reportOrModel)
   const lines = []
-  lines.push({ text: 'Property Inspector', kind: 'brand' })
+  lines.push({ text: BRAND.name || 'Property Inspector', kind: 'brand' })
   lines.push({ text: model.header.title, kind: 'title' })
   lines.push({ text: `Property: ${model.header.property || '—'}`, kind: 'meta' })
   lines.push({ text: `Address: ${model.header.address || '—'}`, kind: 'meta' })
   lines.push({ text: `Inspector: ${model.header.inspector || '—'}`, kind: 'meta' })
   lines.push({ text: `Date: ${model.header.date || '—'}`, kind: 'meta' })
+  if (BRAND.licenseLine) lines.push({ text: BRAND.licenseLine, kind: 'meta' })
   if (model.summary) {
     lines.push({ text: 'Summary', kind: 'h2' })
     lines.push({ text: model.summary, kind: 'body' })
@@ -72,7 +74,18 @@ async function buildPdfDoc(reportOrModel) {
   for (const ln of lines) {
     if (ln.kind === 'brand') {
       doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...ACCENT)
-      ensure(16); doc.text(ln.text, marginX, y); y += 20
+      ensure(16); doc.text(ln.text, marginX, y)
+      // Optional brand logo, top-right. Validated like section photos — bad
+      // data is skipped silently, never a broken export.
+      const lp = dataUrlParts(BRAND.logoDataUrl)
+      const lsize = lp && /image\/(png|jpe?g)/.test(lp.mime) && imageSize(dataUrlToBytes(BRAND.logoDataUrl))
+      if (lsize) {
+        try {
+          const { width, height } = fitBox(lsize, 96, 36)
+          doc.addImage(BRAND.logoDataUrl, lp.mime.includes('png') ? 'PNG' : 'JPEG', marginX + maxW - width, y - 12, width, height)
+        } catch (_e) { /* skip bad logo */ }
+      }
+      y += 20
     } else if (ln.kind === 'title') {
       doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.setTextColor(...NAVY)
       ensure(26); doc.text(ln.text, marginX, y); y += 28
