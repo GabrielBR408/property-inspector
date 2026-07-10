@@ -5,6 +5,7 @@
 
 import { buildExportModel } from './exportModel.js'
 import { dataUrlParts, dataUrlToBytes, imageSize, fitBox } from './imageMeta.js'
+import { BRAND } from './brand.js'
 
 // The docx library is heavy (~150 KB gzipped) and only needed at export time,
 // so it is loaded lazily — like jsPDF in exportPdf.js — keeping it out of the
@@ -35,9 +36,23 @@ export async function buildDocxDocument(reportOrModel) {
   const model = reportOrModel.sections && reportOrModel.header ? reportOrModel : buildExportModel(reportOrModel)
   const children = []
 
+  // Optional brand logo above the brand line. Validated like section photos —
+  // bad data is skipped silently, never a broken document.
+  try {
+    const lp = dataUrlParts(BRAND.logoDataUrl)
+    const lbytes = lp && /image\/(png|jpe?g)/.test(lp.mime) ? dataUrlToBytes(BRAND.logoDataUrl) : null
+    const lsize = lbytes && imageSize(lbytes)
+    if (lsize) {
+      const { width, height } = fitBox(lsize, 128, 48)
+      children.push(new Paragraph({
+        spacing: { after: 80 },
+        children: [new ImageRun({ type: lp.mime.includes('png') ? 'png' : 'jpg', data: lbytes, transformation: { width, height } })]
+      }))
+    }
+  } catch (_e) { /* skip bad logo */ }
   children.push(new Paragraph({
     spacing: { after: 120 },
-    children: [new TextRun({ text: 'Property Inspector', bold: true, color: ACCENT, size: 20 })]
+    children: [new TextRun({ text: BRAND.name || 'Property Inspector', bold: true, color: ACCENT, size: 20 })]
   }))
   children.push(new Paragraph({
     heading: HeadingLevel.HEADING_1,
@@ -48,6 +63,12 @@ export async function buildDocxDocument(reportOrModel) {
   children.push(headerLine('Address', model.header.address))
   children.push(headerLine('Inspector', model.header.inspector))
   children.push(headerLine('Date', model.header.date))
+  if (BRAND.licenseLine) {
+    children.push(new Paragraph({
+      spacing: { after: 40 },
+      children: [new TextRun({ text: BRAND.licenseLine, color: MUTED, size: 18 })]
+    }))
+  }
 
   if (model.summary) {
     children.push(new Paragraph({

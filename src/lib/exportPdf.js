@@ -6,6 +6,7 @@
 
 import { buildExportModel } from './exportModel.js'
 import { dataUrlParts, dataUrlToBytes, imageSize, fitBox } from './imageMeta.js'
+import { BRAND } from './brand.js'
 
 const NAVY = [31, 41, 55]
 const ACCENT = [71, 85, 105]
@@ -24,12 +25,13 @@ function condColor(condition) {
 export function renderPdfLines(reportOrModel) {
   const model = reportOrModel.sections && reportOrModel.header ? reportOrModel : buildExportModel(reportOrModel)
   const lines = []
-  lines.push({ text: 'Property Inspector', kind: 'brand' })
+  lines.push({ text: BRAND.name || 'Property Inspector', kind: 'brand' })
   lines.push({ text: model.header.title, kind: 'title' })
   lines.push({ text: `Property: ${model.header.property || '—'}`, kind: 'meta' })
   lines.push({ text: `Address: ${model.header.address || '—'}`, kind: 'meta' })
   lines.push({ text: `Inspector: ${model.header.inspector || '—'}`, kind: 'meta' })
   lines.push({ text: `Date: ${model.header.date || '—'}`, kind: 'meta' })
+  if (BRAND.licenseLine) lines.push({ text: BRAND.licenseLine, kind: 'meta' })
   if (model.summary) {
     lines.push({ text: 'Summary', kind: 'h2' })
     lines.push({ text: model.summary, kind: 'body' })
@@ -72,7 +74,18 @@ async function buildPdfDoc(reportOrModel) {
   for (const ln of lines) {
     if (ln.kind === 'brand') {
       doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...ACCENT)
-      ensure(16); doc.text(ln.text, marginX, y); y += 20
+      ensure(16); doc.text(ln.text, marginX, y)
+      // Optional brand logo, top-right. Validated like section photos — bad
+      // data is skipped silently, never a broken export.
+      const lp = dataUrlParts(BRAND.logoDataUrl)
+      const lsize = lp && /image\/(png|jpe?g)/.test(lp.mime) && imageSize(dataUrlToBytes(BRAND.logoDataUrl))
+      if (lsize) {
+        try {
+          const { width, height } = fitBox(lsize, 96, 36)
+          doc.addImage(BRAND.logoDataUrl, lp.mime.includes('png') ? 'PNG' : 'JPEG', marginX + maxW - width, y - 12, width, height)
+        } catch (_e) { /* skip bad logo */ }
+      }
+      y += 20
     } else if (ln.kind === 'title') {
       doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.setTextColor(...NAVY)
       ensure(26); doc.text(ln.text, marginX, y); y += 28
@@ -92,14 +105,23 @@ async function buildPdfDoc(reportOrModel) {
       y += 10
       doc.setFont('helvetica', 'bold'); doc.setFontSize(13)
       ensure(18)
-      doc.setTextColor(...NAVY); doc.text(ln.sectionName, marginX, y)
-      const nameW = doc.getTextWidth(ln.sectionName)
+      // A long (user-edited) section name would push the condition rating past
+      // the right margin — printed invisible. Truncate the NAME with an
+      // ellipsis so the rating always stays on the page; the full name is
+      // still in the DOCX and on screen.
+      const condW = doc.getTextWidth(`  ${ln.condition}`)
+      let name = ln.sectionName
+      if (doc.getTextWidth(name) + 8 + condW > maxW) {
+        while (name.length > 1 && doc.getTextWidth(`${name}…`) + 8 + condW > maxW) name = name.slice(0, -1)
+        name = `${name}…`
+      }
+      doc.setTextColor(...NAVY); doc.text(name, marginX, y)
+      const nameW = doc.getTextWidth(name)
       const [r, g, b] = condColor(ln.condition)
       doc.setTextColor(r, g, b); doc.text(`  ${ln.condition}`, marginX + nameW + 8, y)
       if (ln.followUp) {
         // Inline marker so a flagged item is visible in place, not only on the
         // punch list. Width computed at the 13pt bold metrics used above.
-        const condW = doc.getTextWidth(`  ${ln.condition}`)
         doc.setFontSize(9); doc.setTextColor(...ACCENT)
         doc.text('FOLLOW-UP', marginX + nameW + 8 + condW + 10, y)
       }
