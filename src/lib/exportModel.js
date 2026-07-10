@@ -20,6 +20,7 @@ export function buildExportModel(report) {
     name: s.name || s.area || 'Area',
     condition: isValidCondition(s.condition) ? s.condition : DEFAULT_CONDITION,
     text: s.text || '',
+    followUp: !!s.followUp,
     photoCount: (s.photos || []).length,
     photos: s.photos || []
   }))
@@ -28,7 +29,8 @@ export function buildExportModel(report) {
     summary: report.summary || '',
     sections,
     sectionCount: sections.length,
-    photoCount: sections.reduce((n, s) => n + s.photoCount, 0)
+    photoCount: sections.reduce((n, s) => n + s.photoCount, 0),
+    followUpCount: sections.filter((s) => s.followUp).length
   }
 }
 

@@ -132,6 +132,17 @@ textarea { width: 100%; resize: vertical; }
   border-radius: 7px; padding: 0.4rem 0.7rem; font: inherit; font-size: 0.82rem;
   font-weight: 600; cursor: pointer;
 }
+/* Follow-up flag toggle — one tap adds the section to the exported punch list. */
+.flag-btn {
+  border: 1px solid var(--line); background: #fff; color: var(--muted);
+  border-radius: 8px; padding: 0.35rem 0.55rem; font-size: 0.8rem;
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+}
+.flag-btn--on {
+  color: var(--accent-ink); border-color: var(--accent-ink);
+  box-shadow: inset 0 0 0 1px var(--accent-ink); font-weight: 650;
+}
+
 .mini-btn:hover, .add-item:hover, .add-area:hover { background: #eef1f5; border-color: #cbd5e1; }
 .add-item { margin-top: 0.7rem; }
 .add-area { margin-top: 1rem; }

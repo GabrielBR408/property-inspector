@@ -66,7 +66,8 @@ export async function buildDocxDocument(reportOrModel) {
       heading: HeadingLevel.HEADING_2, spacing: { before: 240, after: 40 },
       children: [
         new TextRun({ text: section.name, color: NAVY }),
-        new TextRun({ text: `   ${section.condition}`, bold: true, color: condColor(section.condition), size: 20 })
+        new TextRun({ text: `   ${section.condition}`, bold: true, color: condColor(section.condition), size: 20 }),
+        ...(section.followUp ? [new TextRun({ text: '   FOLLOW-UP', bold: true, color: ACCENT, size: 16 })] : [])
       ]
     }))
     children.push(new Paragraph({
@@ -105,6 +106,26 @@ export async function buildDocxDocument(reportOrModel) {
         }))
       }
     }
+  }
+
+  // Punch list: numbered follow-up items at the end — the actionable summary a
+  // PM hands to a vendor or engineer. Mirrors the PDF's punch list exactly.
+  const flagged = model.sections.filter((s) => s.followUp)
+  if (flagged.length) {
+    children.push(new Paragraph({
+      heading: HeadingLevel.HEADING_2, spacing: { before: 320 },
+      children: [new TextRun({ text: 'Follow-up / Punch list', color: NAVY })]
+    }))
+    flagged.forEach((s, i) => {
+      children.push(new Paragraph({
+        spacing: { before: 80 },
+        children: [
+          new TextRun({ text: `${i + 1}. ${s.name} (${s.condition})`, bold: true, color: NAVY }),
+          ...(s.text ? [new TextRun({ text: ` — ${s.text}` })] : []),
+          ...(s.photoCount ? [new TextRun({ text: ` [${s.photoCount} photo(s)]`, italics: true, color: MUTED })] : [])
+        ]
+      }))
+    })
   }
 
   return new Document({ sections: [{ children }] })

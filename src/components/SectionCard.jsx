@@ -1,6 +1,7 @@
 import React, { useRef } from 'react'
 import { CONDITIONS } from '../lib/schema.js'
 import { fileToPhoto } from '../lib/db.js'
+import { track } from '../lib/track.js'
 
 // One narrative-derived section: an auto-detected area with its verbatim
 // narrative slice (editable), a derived-but-editable condition, and photos.
@@ -42,6 +43,15 @@ export default function SectionCard({ section, onChange, onRemove }) {
         >
           {CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
+        <button
+          type="button"
+          className={`flag-btn${section.followUp ? ' flag-btn--on' : ''}`}
+          onClick={() => { const on = !section.followUp; set({ followUp: on }); track('followup_toggled', { on }) }}
+          aria-pressed={!!section.followUp}
+          title={section.followUp ? 'On the punch list — tap to unflag' : 'Flag for follow-up (adds to the punch list in exports)'}
+        >
+          <span aria-hidden="true">⚑</span> Follow-up
+        </button>
         <button type="button" className="icon-btn" onClick={onRemove} title="Remove section" aria-label={`Remove ${section.name || 'section'}`}>✕</button>
       </div>
 

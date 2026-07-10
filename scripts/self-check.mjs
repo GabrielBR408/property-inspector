@@ -10,7 +10,7 @@ import { CONDITIONS } from '../src/lib/schema.js'
 import {
   segmentNarrative, splitSentences, deriveCondition, analyzeNarrative,
   tallyConditions, deterministicSummary, lastMentionedKey, mergeSections,
-  effectiveRemovedKeys
+  effectiveRemovedKeys, prefixHash
 } from '../src/lib/segment.js'
 import { parseDetails, parseDetailsSmart, extractDate } from '../src/lib/details.js'
 import { buildExportModel, exportSectionKeys } from '../src/lib/exportModel.js'
@@ -416,6 +416,21 @@ console.log('\n[19] User work survives re-segmentation; removed sections stay re
   const rep = { walkthrough: narr, sections: [], removedKeys: removed, aiAreas: [] }
   const { sections: drafted } = await analyzeNarrative(rep, { fetchImpl: async () => ({ ok: false }), makeId: (k) => `sec_${k}` })
   assert('Draft does not resurrect a removed section', !drafted.some((s) => s.key === 'kitchen'), drafted.map((s) => s.key).join(','))
+
+  // Rewritten-narrative revival: the position rule only applies while the text
+  // it referred to still exists. Clearing the walkthrough and retyping the area
+  // must NOT leave it suppressed forever (mention position < old `at`).
+  const removedH = [{ key: 'kitchen', at: narr.length, h: prefixHash(narr) }]
+  assert('removed key stays suppressed while its narrative is intact (hashed entry)',
+    effectiveRemovedKeys(removedH, narr).length === 1)
+  assert('clearing + retyping the area revives it (hashed entry)',
+    effectiveRemovedKeys(removedH, 'kitchen cabinets are cracked').length === 0)
+  assert('clearing + retyping withOUT the area keeps the entry (harmless)',
+    effectiveRemovedKeys(removedH, 'roof is fine').length === 1)
+  assert('legacy entry (no hash): shrunken narrative + new mention revives',
+    effectiveRemovedKeys([{ key: 'kitchen', at: 500 }], 'kitchen cabinets are cracked').length === 0)
+  assert('rewritten same-length-or-longer narrative revives on mention (hash mismatch)',
+    effectiveRemovedKeys(removedH, 'we looked at the kitchen area again today').length === 0)
 }
 
 console.log('\n[20] deriveCondition understands negation')
@@ -520,6 +535,51 @@ console.log('\n[25] Dictation diagnostics are bounded and privacy-safe (no free 
   assert('ua is the bounded class, never the raw string', props.ua === 'safari-ios', props.ua)
   assert('known sources pass through', dictationEventProps({ source: 'details' }).source === 'details' && dictationEventProps({ source: 'walkthrough' }).source === 'walkthrough')
   assert('empty input yields safe defaults', JSON.stringify(dictationEventProps({})) === JSON.stringify({ code: 'unknown', source: 'unknown', online: true, mic: 'unknown', ua: 'other-other' }), JSON.stringify(dictationEventProps({})))
+}
+
+console.log('\n[26] Follow-up flags: preserved, exported, punch-listed — never invented')
+{
+  // A flag set by the user survives re-segmentation (merge keeps extra props).
+  let ui = mergeSections([], segmentNarrative('the kitchen sink leaks and the roof is fine'))
+  assert('fresh sections default to followUp: false', ui.every((s) => s.followUp === false), JSON.stringify(ui.map((s) => s.followUp)))
+  ui = ui.map((s) => (s.key === 'kitchen' ? { ...s, followUp: true } : s))
+  const regrown = mergeSections(ui, segmentNarrative('the kitchen sink leaks and the roof is fine now with new gutters'))
+  const k = regrown.find((s) => s.key === 'kitchen')
+  assert('follow-up flag survives re-segmentation', k && k.followUp === true)
+
+  // A flagged section is USER WORK: it is retained when the narrative drops it.
+  const kept = mergeSections(ui, segmentNarrative('the roof is fine'))
+  assert('flagged section retained when its area leaves the narrative', kept.some((s) => s.key === 'kitchen' && s.followUp))
+
+  // Export model carries flags + count.
+  const model = buildExportModel({ property: 'P', sections: regrown, summary: '' })
+  assert('model carries followUp per section', model.sections.find((s) => s.key === 'kitchen').followUp === true && model.sections.find((s) => s.key === 'roof').followUp === false)
+  assert('model followUpCount matches flagged sections', model.followUpCount === 1, String(model.followUpCount))
+
+  // PDF fragments: section line carries the flag; exactly one punch-list line
+  // per flagged section, none invented for unflagged ones.
+  const lines = renderPdfLines(model)
+  assert('PDF section fragment carries followUp', lines.some((l) => l.kind === 'section' && l.key === 'kitchen' && l.followUp === true))
+  const punch = lines.filter((l) => l.kind === 'followup')
+  assert('exactly one punch-list fragment per flagged section', punch.length === 1 && punch[0].key === 'kitchen', JSON.stringify(punch.map((l) => l.key)))
+  assert('punch-list heading present only when something is flagged', lines.some((l) => l.kind === 'h2' && /punch list/i.test(l.text)))
+  const noneFlagged = renderPdfLines(buildExportModel({ sections: segmentNarrative('the roof is fine') }))
+  assert('no punch list when nothing is flagged', !noneFlagged.some((l) => l.kind === 'followup' || (l.kind === 'h2' && /punch list/i.test(l.text))))
+
+  // Real bytes: PDF and DOCX both carry the marker and the punch list.
+  const pdf = Buffer.from(await pdfToArrayBuffer(model)).toString('latin1')
+  assert('real PDF bytes contain the punch-list heading', pdf.includes('Follow-up / Punch list'))
+  assert('real PDF bytes flag the section inline', pdf.includes('FOLLOW-UP'))
+  const xml = unzipEntry(await docxToBuffer(model), 'word/document.xml')
+  assert('real DOCX contains the punch-list heading', xml.includes('Follow-up / Punch list'))
+  assert('real DOCX flags the section inline', xml.includes('FOLLOW-UP'))
+  assert('DOCX punch list numbers the flagged item', /1\. Kitchen/.test(xml))
+
+  // Deterministic summary mentions the flagged count (and stays silent at zero).
+  const sum = deterministicSummary({ inspector: 'I' }, regrown)
+  assert('summary mentions flagged count', sum.includes('1 item flagged for follow-up'))
+  const sum0 = deterministicSummary({ inspector: 'I' }, segmentNarrative('the roof is fine'))
+  assert('summary silent when nothing is flagged', !sum0.includes('flagged for follow-up'))
 }
 
 // --- Minimal ZIP entry reader ----------------------------------------------
