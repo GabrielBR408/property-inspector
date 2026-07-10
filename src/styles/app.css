@@ -231,3 +231,55 @@ textarea { width: 100%; resize: vertical; }
   .hero-line { font-size: 1.35rem; }
   .page { padding: 1.25rem 0.9rem 3rem; }
 }
+
+/* Feedback widget — floating pill + bottom sheet. Styled entirely from the
+   theme tokens above so the branded and white-label builds differ only in
+   token values. Sheet is bottom-anchored (thumb-reachable one-handed); the
+   global reduced-motion rule above disables its rise animation. */
+.fb-pill {
+  position: fixed; right: 1rem; bottom: 1rem; z-index: 900;
+  border: none; border-radius: 999px; padding: 0.6rem 1.05rem;
+  background: var(--accent); color: #fff; font: inherit; font-size: 0.88rem;
+  font-weight: 700; cursor: pointer; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
+}
+.fb-pill:hover { background: var(--accent-ink); }
+.fb-backdrop { position: fixed; inset: 0; z-index: 950; background: rgba(0, 0, 0, 0.35); }
+.fb-sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 960;
+  max-width: var(--maxw); margin: 0 auto; background: var(--surface);
+  border: 1px solid var(--line); border-bottom: none; border-radius: 14px 14px 0 0;
+  padding: 1rem 1.25rem calc(1rem + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.18);
+  animation: fb-rise 0.2s ease-out;
+}
+@keyframes fb-rise { from { transform: translateY(1.5rem); opacity: 0; } }
+.fb-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.2rem; }
+.fb-title { font-size: 1rem; font-weight: 700; margin: 0; }
+.fb-close {
+  border: none; background: none; color: var(--muted); font-size: 1.4rem;
+  line-height: 1; cursor: pointer; padding: 0.2rem 0.4rem;
+}
+.fb-close:hover { color: var(--ink); }
+.fb-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.6rem 0 0.75rem; }
+.fb-chip {
+  border: 1px solid var(--line); border-radius: 999px; padding: 0.45rem 0.85rem;
+  background: var(--bg); color: var(--ink); font: inherit; font-size: 0.84rem; cursor: pointer;
+}
+.fb-chip--on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.fb-text { width: 100%; min-height: 4.5rem; }
+.fb-receipt {
+  display: flex; flex-direction: column; gap: 0.15rem;
+  border: 1px dashed var(--line); border-radius: 8px; padding: 0.55rem 0.75rem;
+  margin: 0.75rem 0; font-size: 0.76rem; color: var(--muted); background: #fafbfc;
+}
+.fb-receipt-title { font-weight: 700; text-transform: uppercase; font-size: 0.68rem; letter-spacing: 0.06em; }
+.fb-send {
+  width: 100%; padding: 0.8rem 1rem; border: none; border-radius: 8px;
+  background: var(--accent); color: #fff; font: inherit; font-size: 0.95rem;
+  font-weight: 700; cursor: pointer;
+}
+.fb-send:hover:not(:disabled) { background: var(--accent-ink); }
+.fb-send:disabled { opacity: 0.55; cursor: default; }
+.fb-done { text-align: center; padding: 0.5rem 0 0.25rem; }
+.fb-done-title { font-size: 1rem; font-weight: 700; margin: 0 0 0.3rem; }
+.fb-done-note { color: var(--muted); font-size: 0.85rem; margin: 0 0 1rem; }

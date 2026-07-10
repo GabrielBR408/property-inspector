@@ -17,7 +17,11 @@ const base = process.env.VITE_BASE || '/'
 
 export default defineConfig({
   base,
-  define: { __APP_VERSION__: JSON.stringify(appVersion) },
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion),
+    __PKG_VERSION__: JSON.stringify(pkg.version),
+    __COMMIT_SHA__: JSON.stringify(sha || 'dev')
+  },
   plugins: [
     react(),
     VitePWA({

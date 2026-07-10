@@ -56,6 +56,11 @@ function trackDictation(event, code, source, extra = {}) {
 // fires, so its UI resets and its onEnd pass runs).
 let stopActive = null
 
+// True while any dictation session is live. Module-level (not hook state) so
+// non-React code — e.g. the feedback widget's context snapshot — can read it
+// at the moment of sending.
+export function isDictating() { return !!stopActive }
+
 export function useVoice(onFinal, onEnd, source = 'unknown') {
   const [listening, setListening] = useState(false)
   const [interim, setInterim] = useState('')

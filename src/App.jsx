@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import SectionCard from './components/SectionCard.jsx'
 import VoiceButton from './components/VoiceButton.jsx'
+import FeedbackWidget from './components/FeedbackWidget.jsx'
 import { newReport } from './lib/schema.js'
 import { fileToPhoto } from './lib/db.js'
 import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys, proposeAreaLabels } from './lib/segment.js'
@@ -324,6 +325,11 @@ export default function App() {
   const named = report.sections.filter((s) => s.key !== 'general')
   // Tally the same set the "areas detected" count describes.
   const t = tallyConditions(named)
+  // The "screen" attached to feedback: this is a single-page app, so the
+  // closest analog is the area currently under discussion (the last one
+  // mentioned in the walkthrough), falling back to 'main'.
+  const fbKey = lastMentionedKey(report.walkthrough || '', report.aiAreas || [])
+  const fbScreen = (fbKey && (report.sections.find((s) => s.key === fbKey) || {}).name) || 'main'
 
   return (
     <main className="page">
@@ -497,6 +503,8 @@ export default function App() {
         <p className="site-footer-line site-footer-line--muted">Sections are built only from what you said — the AI proposes area labels and the summary, but never invents observations, areas, or ratings.</p>
         <p className="site-footer-line site-footer-line--muted">{APP_VERSION}</p>
       </footer>
+
+      <FeedbackWidget screen={fbScreen} drafting={drafting} />
     </main>
   )
 }
