@@ -10,7 +10,7 @@ import { CONDITIONS } from '../src/lib/schema.js'
 import {
   segmentNarrative, splitSentences, deriveCondition, analyzeNarrative,
   tallyConditions, deterministicSummary, lastMentionedKey, mergeSections,
-  effectiveRemovedKeys
+  effectiveRemovedKeys, prefixHash
 } from '../src/lib/segment.js'
 import { parseDetails, parseDetailsSmart, extractDate } from '../src/lib/details.js'
 import { buildExportModel, exportSectionKeys } from '../src/lib/exportModel.js'
@@ -416,6 +416,21 @@ console.log('\n[19] User work survives re-segmentation; removed sections stay re
   const rep = { walkthrough: narr, sections: [], removedKeys: removed, aiAreas: [] }
   const { sections: drafted } = await analyzeNarrative(rep, { fetchImpl: async () => ({ ok: false }), makeId: (k) => `sec_${k}` })
   assert('Draft does not resurrect a removed section', !drafted.some((s) => s.key === 'kitchen'), drafted.map((s) => s.key).join(','))
+
+  // Rewritten-narrative revival: the position rule only applies while the text
+  // it referred to still exists. Clearing the walkthrough and retyping the area
+  // must NOT leave it suppressed forever (mention position < old `at`).
+  const removedH = [{ key: 'kitchen', at: narr.length, h: prefixHash(narr) }]
+  assert('removed key stays suppressed while its narrative is intact (hashed entry)',
+    effectiveRemovedKeys(removedH, narr).length === 1)
+  assert('clearing + retyping the area revives it (hashed entry)',
+    effectiveRemovedKeys(removedH, 'kitchen cabinets are cracked').length === 0)
+  assert('clearing + retyping withOUT the area keeps the entry (harmless)',
+    effectiveRemovedKeys(removedH, 'roof is fine').length === 1)
+  assert('legacy entry (no hash): shrunken narrative + new mention revives',
+    effectiveRemovedKeys([{ key: 'kitchen', at: 500 }], 'kitchen cabinets are cracked').length === 0)
+  assert('rewritten same-length-or-longer narrative revives on mention (hash mismatch)',
+    effectiveRemovedKeys(removedH, 'we looked at the kitchen area again today').length === 0)
 }
 
 console.log('\n[20] deriveCondition understands negation')

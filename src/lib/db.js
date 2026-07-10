@@ -67,7 +67,12 @@ export async function clearReport() {
 
 // Downscale a captured/selected image file to a JPEG dataUrl so IndexedDB and
 // the PDF stay small. Returns { id, name, dataUrl }.
+// Non-image files are REJECTED here (throw) so callers' existing try/catch
+// skips them: accept="image/*" is only advisory (drag-drop and some pickers
+// bypass it), and a text/PDF "photo" renders as a broken thumbnail in the UI
+// and an unembeddable entry in exports.
 export async function fileToPhoto(file, maxDim = 1280, quality = 0.72) {
+  if (!file || !/^image\//.test(file.type || '')) throw new Error('not an image')
   const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(reader.result)

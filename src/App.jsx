@@ -4,7 +4,7 @@ import VoiceButton from './components/VoiceButton.jsx'
 import FeedbackWidget from './components/FeedbackWidget.jsx'
 import { newReport } from './lib/schema.js'
 import { fileToPhoto } from './lib/db.js'
-import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys, proposeAreaLabels } from './lib/segment.js'
+import { segmentNarrative, mergeSections, analyzeNarrative, tallyConditions, lastMentionedKey, effectiveRemovedKeys, proposeAreaLabels, prefixHash } from './lib/segment.js'
 import { downloadPdf } from './lib/exportPdf.js'
 import { downloadDocx } from './lib/exportDocx.js'
 import { saveReport, loadReport, clearReport, saveInspection, listSavedInspections, loadInspection, deleteInspection } from './lib/db.js'
@@ -193,7 +193,10 @@ export default function App() {
       ...r,
       sections: r.sections.filter((s) => s.id !== id),
       // Record the removal so re-segmentation doesn't resurrect the section.
-      removedKeys: [...(r.removedKeys || []), { key: target.key, at: (r.walkthrough || '').length }]
+      // `h` fingerprints the narrative at removal time — if the user later
+      // clears/rewrites the walkthrough, the position rule no longer applies
+      // and mentioning the area again revives it (see effectiveRemovedKeys).
+      removedKeys: [...(r.removedKeys || []), { key: target.key, at: (r.walkthrough || '').length, h: prefixHash(r.walkthrough || '') }]
     }))
   }
 
@@ -294,6 +297,7 @@ export default function App() {
     setShowSaved(false)
     setLibMsg('')
     setDraftMsg('')
+    setExportMsg('') // message referred to the report this one just replaced
     track('inspection_opened')
   }
 
@@ -317,7 +321,11 @@ export default function App() {
     await clearReport()
     loaded.current = false
     setReport(newReport({ date: todayISO() }))
+    // Clear every transient message — a stale "Saved under …" / "Nothing to
+    // export yet" from the PREVIOUS inspection is misinformation on a fresh one.
     setDraftMsg('')
+    setExportMsg('')
+    setLibMsg('')
     loaded.current = true
   }
 
@@ -423,6 +431,7 @@ export default function App() {
         </div>
         <textarea
           className="walkthrough-text"
+          aria-label="Walkthrough narrative"
           value={report.walkthrough}
           onChange={(e) => setWalkthrough(e.target.value)}
           placeholder="e.g. Starting at the roof — recently replaced, no issues. In the kitchen, the countertops are worn and the faucet drips. The primary bath fan is loud…"
@@ -473,6 +482,7 @@ export default function App() {
         </div>
         <textarea
           className="summary-text"
+          aria-label="Overall summary"
           value={report.summary}
           onChange={(e) => setHeader({ summary: e.target.value })}
           placeholder="Click “Draft report” to generate — or write your own. Fully editable."

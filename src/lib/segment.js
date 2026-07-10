@@ -433,15 +433,42 @@ export function mergeSections(prev = [], fresh = [], makeId = (k) => `sec_${k}`)
 
 // --- Removed-section suppression ---------------------------------------------
 // The user removed a section explicitly; re-segmentation must not resurrect it
-// on the next keystroke. Each entry is { key, at } where `at` is the narrative
-// length at removal time. An entry stays active (still suppresses) until the
-// narrative mentions that area again AT OR AFTER `at` — i.e. the user talking
-// about the area anew revives it, but the text that existed at removal doesn't.
+// on the next keystroke. Each entry is { key, at, h } where `at` is the
+// narrative length at removal time and `h` a cheap hash of the narrative at
+// that moment. An entry stays active (still suppresses) until the narrative
+// mentions that area again AT OR AFTER `at` — i.e. the user talking about the
+// area anew revives it, but the text that existed at removal doesn't.
+//
+// The position rule only means something while the text it referred to is
+// still there. If the narrative was cleared, shortened past the removal point,
+// or rewritten (prefix hash no longer matches), positions from the old text
+// are meaningless — any mention of the area then counts as a new mention and
+// revives it. Without this, removing a section and then clearing/retyping the
+// walkthrough suppressed that area FOREVER (typing "kitchen…" produced no
+// Kitchen section, which reads as silent data loss).
+
+// djb2 — tiny, deterministic, good enough to detect "this text was rewritten".
+export function prefixHash(s) {
+  let h = 5381
+  const str = String(s || '')
+  for (let i = 0; i < str.length; i++) h = (((h << 5) + h) + str.charCodeAt(i)) >>> 0
+  return h
+}
+
 export function effectiveRemovedKeys(removedKeys = [], narrative = '', extraLabels = []) {
   const list = (removedKeys || []).filter((r) => r && r.key)
   if (!list.length) return []
-  const anchors = findAllAreas(String(narrative || ''), buildAliases(extraLabels))
-  return list.filter((r) => !anchors.some((a) => a.key === r.key && a.start >= (r.at || 0)))
+  const text = String(narrative || '')
+  const anchors = findAllAreas(text, buildAliases(extraLabels))
+  return list.filter((r) => {
+    const at = r.at || 0
+    // Legacy entries (no h) can only check length; new entries verify content.
+    const prefixIntact = text.length >= at && (r.h === undefined || prefixHash(text.slice(0, at)) === r.h)
+    if (prefixIntact) return !anchors.some((a) => a.key === r.key && a.start >= at)
+    // Prefix gone/rewritten: the removal referred to text that no longer
+    // exists — any current mention of the area revives it.
+    return !anchors.some((a) => a.key === r.key)
+  })
 }
 
 // Base-aware URL for the serverless endpoint. Under a sub-path deploy the app is

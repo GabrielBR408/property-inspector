@@ -26,6 +26,11 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'prompt',
+      // Take control of the very first visit once the SW activates. Without
+      // this, the first-loaded page is uncontrolled, so the lazily-imported
+      // export chunks (jspdf/docx) can't be served from the precache — "works
+      // offline" only held after a reload. skipWaiting stays off (prompt flow).
+      workbox: { clientsClaim: true },
       includeAssets: ['favicon.svg', 'icons/icon-180.png'],
       manifest: {
         name: 'Property Inspector',
