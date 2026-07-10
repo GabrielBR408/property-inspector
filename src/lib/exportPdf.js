@@ -92,14 +92,23 @@ async function buildPdfDoc(reportOrModel) {
       y += 10
       doc.setFont('helvetica', 'bold'); doc.setFontSize(13)
       ensure(18)
-      doc.setTextColor(...NAVY); doc.text(ln.sectionName, marginX, y)
-      const nameW = doc.getTextWidth(ln.sectionName)
+      // A long (user-edited) section name would push the condition rating past
+      // the right margin — printed invisible. Truncate the NAME with an
+      // ellipsis so the rating always stays on the page; the full name is
+      // still in the DOCX and on screen.
+      const condW = doc.getTextWidth(`  ${ln.condition}`)
+      let name = ln.sectionName
+      if (doc.getTextWidth(name) + 8 + condW > maxW) {
+        while (name.length > 1 && doc.getTextWidth(`${name}…`) + 8 + condW > maxW) name = name.slice(0, -1)
+        name = `${name}…`
+      }
+      doc.setTextColor(...NAVY); doc.text(name, marginX, y)
+      const nameW = doc.getTextWidth(name)
       const [r, g, b] = condColor(ln.condition)
       doc.setTextColor(r, g, b); doc.text(`  ${ln.condition}`, marginX + nameW + 8, y)
       if (ln.followUp) {
         // Inline marker so a flagged item is visible in place, not only on the
         // punch list. Width computed at the 13pt bold metrics used above.
-        const condW = doc.getTextWidth(`  ${ln.condition}`)
         doc.setFontSize(9); doc.setTextColor(...ACCENT)
         doc.text('FOLLOW-UP', marginX + nameW + 8 + condW + 10, y)
       }
