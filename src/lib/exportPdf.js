@@ -35,9 +35,22 @@ export function renderPdfLines(reportOrModel) {
     lines.push({ text: model.summary, kind: 'body' })
   }
   for (const section of model.sections) {
-    lines.push({ text: `${section.name} — ${section.condition}`, kind: 'section', condition: section.condition, sectionName: section.name, key: section.key })
+    lines.push({ text: `${section.name} — ${section.condition}`, kind: 'section', condition: section.condition, sectionName: section.name, key: section.key, followUp: !!section.followUp })
     if (section.text) lines.push({ text: section.text, kind: 'note' })
     if (section.photoCount > 0) lines.push({ text: `${section.photoCount} photo(s) attached`, kind: 'photo', photos: section.photos })
+  }
+  // Punch list: one numbered line per flagged section, at the end where a
+  // contractor/vendor list normally lives. Exactly one 'followup' fragment per
+  // flagged section, so the self-check can assert none are dropped or invented.
+  const flagged = model.sections.filter((s) => s.followUp)
+  if (flagged.length) {
+    lines.push({ text: 'Follow-up / Punch list', kind: 'h2' })
+    flagged.forEach((s, i) => {
+      lines.push({
+        text: `${i + 1}. ${s.name} (${s.condition})${s.text ? ` — ${s.text}` : ''}${s.photoCount ? ` [${s.photoCount} photo(s)]` : ''}`,
+        kind: 'followup', key: s.key
+      })
+    })
   }
   return lines
 }
@@ -80,10 +93,23 @@ async function buildPdfDoc(reportOrModel) {
       doc.setFont('helvetica', 'bold'); doc.setFontSize(13)
       ensure(18)
       doc.setTextColor(...NAVY); doc.text(ln.sectionName, marginX, y)
+      const nameW = doc.getTextWidth(ln.sectionName)
       const [r, g, b] = condColor(ln.condition)
-      doc.setTextColor(r, g, b); doc.text(`  ${ln.condition}`, marginX + doc.getTextWidth(ln.sectionName) + 8, y)
+      doc.setTextColor(r, g, b); doc.text(`  ${ln.condition}`, marginX + nameW + 8, y)
+      if (ln.followUp) {
+        // Inline marker so a flagged item is visible in place, not only on the
+        // punch list. Width computed at the 13pt bold metrics used above.
+        const condW = doc.getTextWidth(`  ${ln.condition}`)
+        doc.setFontSize(9); doc.setTextColor(...ACCENT)
+        doc.text('FOLLOW-UP', marginX + nameW + 8 + condW + 10, y)
+      }
       y += 8
       doc.setDrawColor(227, 231, 236); doc.line(marginX, y, marginX + maxW, y); y += 12
+    } else if (ln.kind === 'followup') {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...NAVY)
+      const wrapped = doc.splitTextToSize(ln.text, maxW)
+      for (const w of wrapped) { ensure(14); doc.text(w, marginX, y); y += 14 }
+      y += 4
     } else if (ln.kind === 'note') {
       doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...MUTED)
       const wrapped = doc.splitTextToSize(ln.text, maxW)

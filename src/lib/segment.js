@@ -416,16 +416,18 @@ export function mergeSections(prev = [], fresh = [], makeId = (k) => `sec_${k}`)
       out.push({
         id: makeId(f.key), key: f.key, area: f.area, name: f.area,
         text: f.text, condition: f.condition, photos: [],
-        textEdited: false, conditionEdited: false, nameEdited: false
+        textEdited: false, conditionEdited: false, nameEdited: false,
+        followUp: false
       })
     }
   }
 
   // Retain previously-created sections that are no longer referenced by the
   // narrative but carry user work — photos OR any user edit (text, name,
-  // condition) — so re-segmentation never destroys something the user did.
+  // condition) OR a follow-up flag — so re-segmentation never destroys
+  // something the user did.
   for (const p of prev) {
-    const hasUserWork = (p.photos || []).length > 0 || p.textEdited || p.nameEdited || p.conditionEdited
+    const hasUserWork = (p.photos || []).length > 0 || p.textEdited || p.nameEdited || p.conditionEdited || p.followUp
     if (!freshByKey.has(p.key) && hasUserWork) out.push(p)
   }
   return out
@@ -577,6 +579,8 @@ export function deterministicSummary(report, sections = []) {
   if (t.Fair) flags.push(`${t.Fair} rated Fair`)
   if (t.Good) flags.push(`${t.Good} rated Good`)
   if (flags.length) parts.push(`${flags.join(', ')}.`)
+  const fu = sections.filter((s) => s.followUp).length
+  if (fu) parts.push(`${fu} item${fu === 1 ? '' : 's'} flagged for follow-up (see punch list).`)
   if (t.Poor) parts.push('Areas rated Poor should be prioritized for follow-up.')
   return parts.join(' ')
 }

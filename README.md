@@ -37,6 +37,10 @@ key.
   extra vocabulary, so a label only yields a section if it actually appears in the
   narrative — the AI can never inject an invented area, observation, or rating.
   Without a key it segments + summarizes deterministically.
+- **Follow-up flags / punch list**: one tap flags a section for follow-up
+  ("needs vendor"). Flagged items get an inline FOLLOW-UP marker and a numbered
+  **Follow-up / Punch list** page at the end of both exports, and the on-screen
+  tally and deterministic summary show the flagged count.
 - **Export**: client-side **PDF** (jsPDF) and **editable .docx** (`docx`), both
   built from one shared export model.
 
