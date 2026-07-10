@@ -32,6 +32,7 @@ export function newReport(header = {}) {
     date: header.date || '',
     walkthrough: '', // the narrative; sections are derived from this
     summary: '',
+    summaryEdited: false, // user wrote/edited the summary — Draft must confirm before replacing it
     sections: [], // [{ id, key, area, name, text, condition, photos, *Edited flags }]
     aiAreas: [], // AI-proposed area labels; extend LIVE segmentation vocabulary
     removedKeys: [] // [{ key, at }] sections the user removed; suppresses re-detection (segment.js effectiveRemovedKeys)

@@ -301,14 +301,18 @@ function wordRe(k) {
 
 // Negation guard: a cue directly preceded (within ~2 words) by a negator is a
 // statement of ABSENCE ("no water damage", "not broken") and must not fire.
-const NEGATOR_WINDOW_RE = /\b(?:no|not|isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent|without|never|free\s+of|free\s+from)\s+(?:\w+\s+){0,2}$/
+// Includes the do/did/will/can/has family of contractions — "the roof doesn't
+// leak" is the single most common way inspectors dictate a PASSING check, and
+// it must not rate Poor. Apostrophe-less variants cover dictation engines that
+// drop the apostrophe entirely.
+const NEGATOR_WINDOW_RE = /\b(?:no|not|isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent|doesn't|doesnt|don't|dont|didn't|didnt|won't|wont|can't|cant|cannot|couldn't|couldnt|wouldn't|wouldnt|shouldn't|shouldnt|hasn't|hasnt|haven't|havent|hadn't|hadnt|without|never|free\s+of|free\s+from)\s+(?:\w+\s+){0,2}$/
 function isNegated(lc, index) {
   return NEGATOR_WINDOW_RE.test(lc.slice(0, index))
 }
 
 // A NEGATED good-rating ("not in good condition", "isn't looking great") is a
 // stated downgrade — rate Fair, never let the embedded "good" read as Good.
-const NEGATED_GOOD_RE = /\b(?:not|isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent|no\s+longer)\s+(?:\w+\s+){0,2}?(?:in\s+)?(?:good|great|excellent|pristine|well[- ]maintained|like\s+new)\b/
+const NEGATED_GOOD_RE = /\b(?:not|isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent|doesn't|doesnt|don't|dont|didn't|didnt|no\s+longer)\s+(?:\w+\s+){0,2}?(?:in\s+)?(?:good|great|excellent|pristine|well[- ]maintained|like\s+new)\b/
 
 // First non-negated match of `re` in `lc`, or null.
 function unnegatedMatch(lc, re) {
@@ -324,7 +328,10 @@ function unnegatedMatch(lc, re) {
 }
 
 export function deriveCondition(text) {
-  const lc = ` ${String(text || '').toLowerCase()} `
+  // Normalize curly apostrophes: iOS dictation emits "isn\u2019t broken", and the
+  // negation regexes match the straight-quote forms — without this, a dictated
+  // negation silently fails and the defect noun rates Poor.
+  const lc = ` ${String(text || '').toLowerCase().replace(/[\u2018\u2019]/g, "'")} `
   // 1. Explicit self-rating wins over incidental defect words. A stated Poor
   //    still dominates; a negated Good ("not in good condition") rates Fair.
   const explicitPoor = EXPLICIT_RE[0]

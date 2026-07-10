@@ -57,6 +57,7 @@ export default function SectionCard({ section, onChange, onRemove }) {
 
       <textarea
         className="item-notes"
+        aria-label={`Notes for ${section.name || 'section'}`}
         value={section.text}
         onChange={(e) => set({ text: e.target.value }, { textEdited: true })}
         placeholder="What was said about this area…"
