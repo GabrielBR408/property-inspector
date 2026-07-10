@@ -227,11 +227,21 @@ export default function App() {
   }
 
   const onDraft = async () => {
+    // Drafting replaces the summary. If the user WROTE or edited the current
+    // one, confirm before discarding their words — sections update either way.
+    const keepUserSummary = !!(report.summaryEdited && (report.summary || '').trim()) &&
+      !window.confirm('Replace your edited summary with a newly drafted one? Your sections are updated either way.')
     setDrafting(true); setDraftMsg('')
     try {
       const { sections, summary, source, areas } = await analyzeNarrative(report, { makeId: sectionId })
       // Persist AI-proposed labels so they extend LIVE segmentation going forward.
-      setReport((r) => ({ ...r, sections, summary, aiAreas: areas || r.aiAreas }))
+      setReport((r) => ({
+        ...r,
+        sections,
+        summary: keepUserSummary ? r.summary : summary,
+        summaryEdited: keepUserSummary ? r.summaryEdited : false,
+        aiAreas: areas || r.aiAreas
+      }))
       setDraftMsg(source === 'ai'
         ? 'Drafted with AI — sections and summary generated. Everything below is editable.'
         : 'Drafted offline (deterministic) — sections and summary generated. Everything below is editable.')
@@ -242,10 +252,17 @@ export default function App() {
     } finally { setDrafting(false) }
   }
 
+  const hasExportContent = report.sections.length > 0 || !!(report.walkthrough || '').trim() || !!(report.summary || '').trim()
+  // The "nothing to export" guidance must not linger once the user HAS content
+  // — a stale warning next to live export buttons reads as broken.
+  useEffect(() => {
+    if (hasExportContent) setExportMsg((m) => (m.startsWith('Nothing to export') ? '' : m))
+  }, [hasExportContent])
+
   const onExport = async (kind) => {
     // A truly empty report exports as a blank page — confusing, not useful.
     // Point back to the walkthrough instead. Any content at all still exports.
-    if (!report.sections.length && !(report.walkthrough || '').trim() && !(report.summary || '').trim()) {
+    if (!hasExportContent) {
       setExportMsg('Nothing to export yet — dictate or type your walkthrough above and sections will appear.')
       return
     }
@@ -485,7 +502,7 @@ export default function App() {
           className="summary-text"
           aria-label="Overall summary"
           value={report.summary}
-          onChange={(e) => setHeader({ summary: e.target.value })}
+          onChange={(e) => setHeader({ summary: e.target.value, summaryEdited: true })}
           placeholder="Click “Draft report” to generate — or write your own. Fully editable."
           rows={4}
         />
